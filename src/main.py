@@ -48,7 +48,7 @@ NUM_PRECOMPUTED = 16
 LR = 0.00001, 0.0001
 REG = 0, 0
 MAX_NORM = 100
-NUM_ROUNDS = 1
+NUM_ROUNDS = 5_000
 
 main_optimiser = torch.optim.Adam(base_model.parameters(), lr=LR[0], weight_decay=REG[0])
 fwd_optimiser = torch.optim.Adam(itertools.chain(stop_model.parameters(), node_model.parameters(), edge_model.parameters()), lr=LR[1], weight_decay=REG[1])
