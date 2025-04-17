@@ -179,5 +179,11 @@ if __name__ == "__main__":
     print(test_mean_connected_prop, test_node_count_distribution)
     np.save(f"results/counts_{int(N*1_000)}.npy", np.array(sorted([[k, v] for k, v in test_node_count_distribution.items()], key=lambda x: x[0])))
     np.save(f"results/prop_{int(N*1_000)}.npy", np.array([test_mean_connected_prop]))
+    
+    torch.save(base_model.state_dict(), f"results/models/base_model_{int(N*1_000)}.pt")
+    torch.save(stop_model.state_dict(), f"results/models/stop_model_{int(N*1_000)}.pt")
+    torch.save(node_model.state_dict(), f"results/models/node_model_{int(N*1_000)}.pt")
+    torch.save(edge_model.state_dict(), f"results/models/edge_model_{int(N*1_000)}.pt")
+    torch.save(log_z_model.state_dict(), f"results/models/log_z_model_{int(N*1_000)}.pt")
 
     print("done.")
