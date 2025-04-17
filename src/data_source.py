@@ -319,6 +319,9 @@ class GFNSampler(IterableDataset):
     @torch.no_grad()
     def generate_graphs(self, num):
 
+        if num == 0:
+            return []
+
         self.base_model.eval(), self.stop_model.eval(), self.node_model.eval(), self.edge_model.eval()
 
         nodes = torch.zeros((num, self.start_size, self.node_features), device="cpu")

@@ -13,12 +13,13 @@ from gfn import get_tb_loss_manual
 
 # TODO: TEMP
 N = float(sys.argv[1])
+print(f"RUNNING N={N}")
 
 SEED = 43
 DEVICE = "cuda"
 SAVE = False
 CYCLE = 5
-NUM_TEST_GRAPHS = 64
+NUM_TEST_GRAPHS = 0
 
 random.seed(SEED)
 np.random.seed(SEED)
@@ -47,7 +48,7 @@ NUM_PRECOMPUTED = 16
 LR = 0.00001, 0.0001
 REG = 0, 0
 MAX_NORM = 100
-NUM_ROUNDS = 50_000
+NUM_ROUNDS = 1
 
 main_optimiser = torch.optim.Adam(base_model.parameters(), lr=LR[0], weight_decay=REG[0])
 fwd_optimiser = torch.optim.Adam(itertools.chain(stop_model.parameters(), node_model.parameters(), edge_model.parameters()), lr=LR[1], weight_decay=REG[1])
@@ -119,8 +120,8 @@ if __name__ == "__main__":
                         np.save(f"results/batches/edges_{it}_{i}.npy", edges.to("cpu").numpy())
                         np.save(f"results/batches/masks_{it}_{i}.npy", edges.to("cpu").numpy())
 
-                test_mean_log_reward /= NUM_TEST_GRAPHS
-                test_mean_connected_prop /= NUM_TEST_GRAPHS
+                test_mean_log_reward /= NUM_TEST_GRAPHS if NUM_TEST_GRAPHS != 0 else 1
+                test_mean_connected_prop /= NUM_TEST_GRAPHS if NUM_TEST_GRAPHS != 0 else 1
 
                 test_node_count_distribution = collections.Counter(test_node_counts)
 
@@ -149,5 +150,34 @@ if __name__ == "__main__":
                     torch.save(node_model.state_dict(), f"results/models/node_model_{it}.pt")
                     torch.save(edge_model.state_dict(), f"results/models/edge_model_{it}.pt")
                     torch.save(log_z_model.state_dict(), f"results/models/log_z_model_{it}.pt")
+
+    # TODO: TEMP
+
+    from tqdm import trange
+
+    test_node_counts = []
+    test_mean_connected_prop = 0
+
+    graphs = []
+    for i in trange(16):
+        graphs += data_source.generate_graphs(64)
+
+    for i, (nodes, edges, masks) in enumerate(graphs):
+        num_nodes = torch.sum(torch.sum(nodes, dim=1) > 0, dim=0)
+        num_edges = torch.sum(edges[:, :, 0], dim=(0, 1))
+
+        test_node_counts.append(num_nodes.item())
+        test_mean_connected_prop += float(num_edges == num_nodes**2)
+
+        np.save(f"results/batches/{int(N*1_000)}_nodes_{i}.npy", nodes.to("cpu").numpy())
+        np.save(f"results/batches/{int(N*1_000)}_edges_{i}.npy", edges.to("cpu").numpy())
+        np.save(f"results/batches/{int(N*1_000)}_masks_{i}.npy", edges.to("cpu").numpy())
+
+    test_mean_connected_prop /= 1024
+    test_node_count_distribution = collections.Counter(test_node_counts)
+
+    print(test_mean_connected_prop, test_node_count_distribution)
+    np.save(f"results/counts_{int(N*1_000)}.npy", np.array(sorted([[k, v] for k, v in test_node_count_distribution.items()], key=lambda x: x[0])))
+    np.save(f"results/prop_{int(N*1_000)}.npy", np.array([test_mean_connected_prop]))
 
     print("done.")
