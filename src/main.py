@@ -1,5 +1,6 @@
 import collections
 import itertools
+import sys
 import random
 import numpy as np
 import torch
@@ -9,6 +10,9 @@ from graph_transformer_pytorch import GraphTransformer
 from data_source import GFNSampler, get_reward_fn_generator, get_smoothed_log_reward
 from gfn import get_tb_loss_manual
 
+
+# TODO: TEMP
+N = float(sys.argv[1])
 
 SEED = 43
 DEVICE = "cuda"
@@ -71,7 +75,7 @@ if __name__ == "__main__":
 
     for it, (jagged_trajs, log_rewards) in zip(range(NUM_ROUNDS), data_loader):
 
-        loss, metrics = get_tb_loss_manual(base_model, stop_model, node_model, edge_model, log_z_model, jagged_trajs, log_rewards, device=DEVICE)
+        loss, metrics = get_tb_loss_manual(base_model, stop_model, node_model, edge_model, log_z_model, jagged_trajs, log_rewards, n=N, device=DEVICE)
         loss.backward()
 
         sq_norm = 0

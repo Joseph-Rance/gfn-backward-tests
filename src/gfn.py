@@ -82,62 +82,6 @@ def get_action_probs(
 
     return action_probs
 
-def get_predictions(base_model, stop_model, node_model, edge_model, nodes, edges, masks, random_action_prob=0,
-                    max_nodes=10, masked_action_value=-100, action_prob_clip_bounds=(-50, 50), device="cuda"):
-
-    num_node_features = nodes.shape[2]
-    num_edge_features = edges.shape[3] + 2*num_node_features
-
-    # extract only unique inputs
-    combined = torch.concat((nodes.reshape(nodes.shape[0], 1, -1, num_node_features), edges), dim=1)
-    output, inverse_indices = torch.unique(combined, return_inverse=True, dim=0)
-    unique_nodes, unique_edges = torch.split(output, (1, edges.shape[1]), dim=1)
-    unique_nodes = unique_nodes.reshape((unique_nodes.shape[0], -1, num_node_features))
-    indices = torch.scatter_reduce(torch.full(size=(output.shape[0],), fill_value=inverse_indices.shape[0], device="cpu"), index=inverse_indices,
-                                    src=torch.arange(inverse_indices.shape[0], device="cpu"), dim=0, reduce="amin")
-    unique_masks = masks[indices]
-
-    # get embeddings from the transformer
-    node_embeddings, edge_embeddings = base_model(unique_nodes.to(device), unique_edges.to(device), mask=unique_masks.to(device))
-
-    # add node embeddings to edges
-    node_grid_a = node_embeddings.reshape((node_embeddings.shape[0], 1, *node_embeddings.shape[1:])).expand((node_embeddings.shape[0], node_embeddings.shape[1], *node_embeddings.shape[1:]))
-    node_grid_b = node_embeddings.reshape((*node_embeddings.shape[:2], 1, node_embeddings.shape[2])).expand((*node_embeddings.shape[:2], node_embeddings.shape[1], node_embeddings.shape[2]))
-    edge_embeddings = torch.concat((edge_embeddings, node_grid_a, node_grid_b), dim=3)
-
-    node_embeddings[~unique_masks] = 0
-    mean_embedding = torch.sum(node_embeddings, dim=1)  # use sum instead of mean because it makes more sense for this specific task
-
-    # get action predictions from the smaller models
-    stop_pred = stop_model(mean_embedding).to("cpu")
-    node_pred = node_model(mean_embedding).to("cpu")
-    edge_pred = edge_model(edge_embeddings.reshape((-1, num_edge_features))).reshape((unique_nodes.shape[0], -1)).to("cpu")
-
-    clipped_stop_pred = torch.clamp(stop_pred, min=action_prob_clip_bounds[0], max=action_prob_clip_bounds[1])
-    clipped_node_pred = torch.clamp(node_pred, min=action_prob_clip_bounds[0], max=action_prob_clip_bounds[1])
-    clipped_edge_pred = torch.clamp(edge_pred, min=action_prob_clip_bounds[0], max=action_prob_clip_bounds[1])
-
-    rand_acts = random.choices(list(range(unique_nodes.shape[0])), k=round(unique_nodes.shape[0] * random_action_prob))
-    clipped_stop_pred[rand_acts] = clipped_node_pred[rand_acts] = clipped_edge_pred[rand_acts] = 1
-
-    repeated_mask = unique_masks.reshape((*unique_masks.shape, 1)).expand(-1, -1, unique_masks.shape[1])
-    edge_action_mask = torch.logical_and(torch.transpose(repeated_mask, 1, 2), repeated_mask)  # out-of-domain actions
-    edge_action_mask[unique_edges[:, :, :, 0] == 1] = False  # repeated actions
-    edge_action_mask = edge_action_mask.reshape((unique_nodes.shape[0], -1))
-    clipped_edge_pred[~edge_action_mask] = masked_action_value
-
-    node_action_mask = torch.sum(unique_masks, dim=1) < max_nodes
-    clipped_node_pred[~node_action_mask] = masked_action_value
-
-    unique_action_probs = torch.concat((clipped_edge_pred, clipped_node_pred, clipped_stop_pred), dim=1)
-
-    corr_unique_action_probs = unique_action_probs - torch.max(unique_action_probs)  # to avoid overflow
-    norm_unique_action_probs = corr_unique_action_probs - torch.logsumexp(corr_unique_action_probs, dim=1).reshape((-1, 1))  # log softmax
-
-    action_probs = norm_unique_action_probs[inverse_indices]
-
-    return action_probs
-
 def get_tb_loss_uniform(base_model, stop_model, node_model, edge_model, log_z_model, jagged_trajs, log_rewards, device="cuda"):
 
     base_model.train(), stop_model.train(), node_model.train(), edge_model.train(), log_z_model.train()
@@ -191,9 +135,7 @@ def adjust_action_idxs(action_idxs, pre_padding_lens, post_padding_len):
             action_idxs[i] += (post_padding_len - pre_padding_lens[i]) * post_padding_len
     return action_idxs
 
-N = 0.2
-
-def get_tb_loss_manual(base_model, stop_model, node_model, edge_model, log_z_model, jagged_trajs, log_rewards, device="cuda"):
+def get_tb_loss_manual(base_model, stop_model, node_model, edge_model, log_z_model, jagged_trajs, log_rewards, n=1, device="cuda"):
 
     base_model.train(), stop_model.train(), node_model.train(), edge_model.train(), log_z_model.train()
 
@@ -229,9 +171,9 @@ def get_tb_loss_manual(base_model, stop_model, node_model, edge_model, log_z_mod
             has_disconnected = (torch.sum(s[1][:, -1]) == 0 and torch.sum(s[1][-1, :]) == 0).item()
             if has_disconnected:
                 if a == len(s[2])**2:
-                    traj_log_p_b[i] += log(N/(num+N-1))
+                    traj_log_p_b[i] += log(n/(num+n-1))
                 else:
-                    traj_log_p_b[i] += log(1/(num+N-1))
+                    traj_log_p_b[i] += log(1/(num+n-1))
             else:
                 traj_log_p_b[i] += log(1/num)
 

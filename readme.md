@@ -1,3 +1,3 @@
 ```bash
-bash run.sh
+bash scripts/run.sh
 ```
