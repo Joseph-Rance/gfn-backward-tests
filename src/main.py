@@ -1,6 +1,6 @@
 import collections
 import itertools
-import sys
+import argparse
 import random
 import numpy as np
 import torch
@@ -8,39 +8,74 @@ import torch.nn as nn
 from graph_transformer_pytorch import GraphTransformer
 
 from data_source import GFNSampler, get_reward_fn_generator, get_smoothed_log_reward
-from gfn import get_tb_loss_manual
+from gfn import get_tb_loss_uniform, get_tb_loss_add_node_mult, get_tb_loss_tlm
 
 
-# TODO: TEMP
-N = float(sys.argv[1])
-print(f"RUNNING N={N}")
+parser = argparse.ArgumentParser()
 
-SEED = 43
-DEVICE = "cuda"
-SAVE = False
-CYCLE = 5
-NUM_TEST_GRAPHS = 0
-
-random.seed(SEED)
-np.random.seed(SEED)
-torch.manual_seed(SEED)
+# general
+parser.add_argument("-s", "--seed", default=1)
+parser.add_argument("-v", "--device", default="cuda", help="generally 'cuda' or 'cpu'")
+parser.add_argument("-o", "--save", default=False, help="whether to save outputs to a file")
+parser.add_argument("-c", "--cycle", default=5, help="how often to log/checkpoint (number of batches)")
+parser.add_argument("-t", "--num-test-graphs", default=0, help="number of graphs to generate for estimating metrics")
 
 # env
-BASE = 0.8
+parser.add_argument("-b", "--base", default=0.8, help="base for exponent used in reward calculation")
 
 # model
-NUM_NODE_FEATURES = NUM_EDGE_FEATURES = 10
-DEPTH = 1
-MAX_LEN = 80
-MAX_NODES = 8
-RANDOM_PROB, RANDOM_PROB_DECAY, MIN_RANDOM_PROB = 1, 0.99, 0.1
+parser.add_argument("-f", "--num-features", default=10, help="number of features used to represent each node/edge (min 2)")
+parser.add_argument("-d", "--depth", default=1, help="depth of the transformer model")
+parser.add_argument("-l", "--max-len", default=80, help="maximum number of actions per trajectory")
+parser.add_argument("-g", "--max-nodes", default=80, help="maximum number of nodes in a generated graph")
+parser.add_argument("-r", "--random-action-config", default=2, help="index of the random action config to use (see code)")
+
+random_configs = [
+    (0, 0, 0),
+    (0.5, 0, 0.5),
+    (1, 0.99, 0.1)
+]
+
+RANDOM_PROB, RANDOM_PROB_DECAY, MIN_RANDOM_PROB = random_configs[]
+
+parser.add_argument("-l", "--loss-fn", default="tb-uniform", help="loss function for training (e.g. TB + uniform backward policy)")
+parser.add_argument("-n", "--node-mult-val", default=1)
+args = parser.parse_args()
+
+configs = {
+    "tb-uniform": (get_tb_loss_uniform, {"parameterise_backward": False}),
+    "tb-add-node-mult": (lambda *args, **kwargs: get_tb_loss_add_node_mult(*args, n=args.node_mult_val, **kwargs), {"parameterise_backward": False}),
+    "tb-tlm": (get_tb_loss_tlm, {"parameterise_backward": True})
+}
+
+get_loss, config = configs[args.loss_fn]
+parameterise_backward = config["parameterise_backward"]
+
+
+random.seed(args.seed)
+np.random.seed(args.seed)
+torch.manual_seed(args.seed)
+
+
+
+base_model = torch.compile(GraphTransformer(dim=NUM_NODE_FEATURES, depth=DEPTH, edge_dim=NUM_EDGE_FEATURES, with_feedforwards=True, gated_residual=True, rel_pos_emb=False)).to(args.device)
 
 cat_edge_features = NUM_EDGE_FEATURES + 2*NUM_NODE_FEATURES
-base_model = torch.compile(GraphTransformer(dim=NUM_NODE_FEATURES, depth=DEPTH, edge_dim=NUM_EDGE_FEATURES, with_feedforwards=True, gated_residual=True, rel_pos_emb=False)).to(DEVICE)
-stop_model = torch.compile(nn.Sequential(nn.Linear(NUM_NODE_FEATURES, NUM_NODE_FEATURES*2), nn.LeakyReLU(), nn.Linear(NUM_NODE_FEATURES*2, 1))).to(DEVICE)
-node_model = torch.compile(nn.Sequential(nn.Linear(NUM_NODE_FEATURES, NUM_NODE_FEATURES*2), nn.LeakyReLU(), nn.Linear(NUM_NODE_FEATURES*2, 1))).to(DEVICE)
-edge_model = torch.compile(nn.Sequential(nn.Linear(cat_edge_features, cat_edge_features*2), nn.LeakyReLU(), nn.Linear(cat_edge_features*2, 1))).to(DEVICE)
-log_z_model = torch.compile(nn.Linear(1, 1, bias=False)).to(DEVICE)
+
+fwd_stop_model = torch.compile(nn.Sequential(nn.Linear(NUM_NODE_FEATURES, NUM_NODE_FEATURES*2), nn.LeakyReLU(), nn.Linear(NUM_NODE_FEATURES*2, 1))).to(args.device)
+fwd_node_model = torch.compile(nn.Sequential(nn.Linear(NUM_NODE_FEATURES, NUM_NODE_FEATURES*2), nn.LeakyReLU(), nn.Linear(NUM_NODE_FEATURES*2, 1))).to(args.device)
+fwd_edge_model = torch.compile(nn.Sequential(nn.Linear(cat_edge_features, cat_edge_features*2), nn.LeakyReLU(), nn.Linear(cat_edge_features*2, 1))).to(args.device)
+fwd_models = [fwd_stop_model, fwd_node_model, fwd_edge_model]
+
+if parameterise_backward:
+    bck_stop_model = torch.compile(nn.Sequential(nn.Linear(NUM_NODE_FEATURES, NUM_NODE_FEATURES*2), nn.LeakyReLU(), nn.Linear(NUM_NODE_FEATURES*2, 1))).to(args.device)
+    bck_node_model = torch.compile(nn.Sequential(nn.Linear(NUM_NODE_FEATURES, NUM_NODE_FEATURES*2), nn.LeakyReLU(), nn.Linear(NUM_NODE_FEATURES*2, 1))).to(args.device)
+    bck_edge_model = torch.compile(nn.Sequential(nn.Linear(cat_edge_features, cat_edge_features*2), nn.LeakyReLU(), nn.Linear(cat_edge_features*2, 1))).to(args.device)
+    bck_models = [bck_stop_model, bck_node_model, bck_edge_model]
+else:
+    bck_models = []
+
+log_z_model = torch.compile(nn.Linear(1, 1, bias=False)).to(args.device)
 
 # training
 BATCH_SIZE = 32
@@ -51,7 +86,7 @@ MAX_NORM = 100
 NUM_ROUNDS = 5_000
 
 main_optimiser = torch.optim.Adam(base_model.parameters(), lr=LR[0], weight_decay=REG[0])
-fwd_optimiser = torch.optim.Adam(itertools.chain(stop_model.parameters(), node_model.parameters(), edge_model.parameters()), lr=LR[1], weight_decay=REG[1])
+fwd_optimiser = torch.optim.Adam(itertools.chain(*(i.parameters() for i in fwd_models)), lr=LR[1], weight_decay=REG[1])
 log_z_optimiser = torch.optim.Adam(log_z_model.parameters(), lr=LR[1], weight_decay=REG[1])
 
 main_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(main_optimiser, T_max=NUM_ROUNDS)
@@ -63,24 +98,24 @@ if __name__ == "__main__":
     torch.set_float32_matmul_precision('high')
     torch.backends.cudnn.benchmark = True
 
-    reward_fn_generator = get_reward_fn_generator(get_smoothed_log_reward, base=BASE)
+    reward_fn_generator = get_reward_fn_generator(get_smoothed_log_reward, base=args.base)
 
-    data_source = GFNSampler(base_model, stop_model, node_model, edge_model, reward_fn_generator,
+    data_source = GFNSampler(base_model, *fwd_models, reward_fn_generator,
                              node_features=NUM_NODE_FEATURES, edge_features=NUM_EDGE_FEATURES,
-                             random_action_prob=RANDOM_PROB, max_len=MAX_LEN, max_nodes=MAX_NODES, base=BASE,
+                             random_action_prob=RANDOM_PROB, max_len=MAX_LEN, max_nodes=MAX_NODES, base=args.base,
                              batch_size=BATCH_SIZE, num_precomputed=NUM_PRECOMPUTED,
-                             device=DEVICE)
+                             device=args.device)
     data_loader = torch.utils.data.DataLoader(data_source, batch_size=None)
 
     sum_loss = mean_log_reward = mean_connected_prop = mean_num_nodes = 0
 
     for it, (jagged_trajs, log_rewards) in zip(range(NUM_ROUNDS), data_loader):
 
-        loss, metrics = get_tb_loss_manual(base_model, stop_model, node_model, edge_model, log_z_model, jagged_trajs, log_rewards, n=N, device=DEVICE)
+        loss, metrics = get_loss(base_model, *fwd_models, *bck_models, log_z_model, jagged_trajs, log_rewards, device=args.device)
         loss.backward()
 
         sq_norm = 0
-        for m in (base_model, stop_model, node_model, edge_model, log_z_model):
+        for m in (base_model, *fwd_models, log_z_model):
             sq_norm += min(MAX_NORM, torch.nn.utils.clip_grad_norm_(m.parameters(), MAX_NORM).item()) ** 2
 
         main_optimiser.step()
@@ -115,7 +150,7 @@ if __name__ == "__main__":
                     test_mean_connected_prop += float(num_edges == num_nodes**2)
                     test_node_counts.append(num_nodes.item())
 
-                    if SAVE:
+                    if args.save:
                         np.save(f"results/batches/nodes_{it}_{i}.npy", nodes.to("cpu").numpy())
                         np.save(f"results/batches/edges_{it}_{i}.npy", edges.to("cpu").numpy())
                         np.save(f"results/batches/masks_{it}_{i}.npy", edges.to("cpu").numpy())
@@ -144,46 +179,10 @@ if __name__ == "__main__":
 
                 data_source.random_action_prob = max(MIN_RANDOM_PROB, data_source.random_action_prob * RANDOM_PROB_DECAY)
 
-                if SAVE:
-                    torch.save(base_model.state_dict(), f"results/models/base_model_{it}.pt")
-                    torch.save(stop_model.state_dict(), f"results/models/stop_model_{it}.pt")
-                    torch.save(node_model.state_dict(), f"results/models/node_model_{it}.pt")
-                    torch.save(edge_model.state_dict(), f"results/models/edge_model_{it}.pt")
-                    torch.save(log_z_model.state_dict(), f"results/models/log_z_model_{it}.pt")
-
-    # TODO: TEMP
-
-    from tqdm import trange
-
-    test_node_counts = []
-    test_mean_connected_prop = 0
-
-    graphs = []
-    for i in trange(16):
-        graphs += data_source.generate_graphs(64)
-
-    for i, (nodes, edges, masks) in enumerate(graphs):
-        num_nodes = torch.sum(torch.sum(nodes, dim=1) > 0, dim=0)
-        num_edges = torch.sum(edges[:, :, 0], dim=(0, 1))
-
-        test_node_counts.append(num_nodes.item())
-        test_mean_connected_prop += float(num_edges == num_nodes**2)
-
-        np.save(f"results/batches/{int(N*1_000)}_nodes_{i}.npy", nodes.to("cpu").numpy())
-        np.save(f"results/batches/{int(N*1_000)}_edges_{i}.npy", edges.to("cpu").numpy())
-        np.save(f"results/batches/{int(N*1_000)}_masks_{i}.npy", edges.to("cpu").numpy())
-
-    test_mean_connected_prop /= 1024
-    test_node_count_distribution = collections.Counter(test_node_counts)
-
-    print(test_mean_connected_prop, test_node_count_distribution)
-    np.save(f"results/counts_{int(N*1_000)}.npy", np.array(sorted([[k, v] for k, v in test_node_count_distribution.items()], key=lambda x: x[0])))
-    np.save(f"results/prop_{int(N*1_000)}.npy", np.array([test_mean_connected_prop]))
-    
-    torch.save(base_model.state_dict(), f"results/models/base_model_{int(N*1_000)}.pt")
-    torch.save(stop_model.state_dict(), f"results/models/stop_model_{int(N*1_000)}.pt")
-    torch.save(node_model.state_dict(), f"results/models/node_model_{int(N*1_000)}.pt")
-    torch.save(edge_model.state_dict(), f"results/models/edge_model_{int(N*1_000)}.pt")
-    torch.save(log_z_model.state_dict(), f"results/models/log_z_model_{int(N*1_000)}.pt")
+                if args.save:
+                    names = ("stop_model", "node_model", "edge_model")
+                    for m, f in zip([base_model, *fwd_models, *bck_models, log_z_model],
+                                    ["base_model", *("fwd_" + n for n in names), *("bck_" + n for n in names), "log_z_model"]):
+                        torch.save(m.state_dict(), f"results/models/{f}_{it}.pt")
 
     print("done.")

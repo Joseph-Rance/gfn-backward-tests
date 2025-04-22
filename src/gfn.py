@@ -135,7 +135,7 @@ def adjust_action_idxs(action_idxs, pre_padding_lens, post_padding_len):
             action_idxs[i] += (post_padding_len - pre_padding_lens[i]) * post_padding_len
     return action_idxs
 
-def get_tb_loss_manual(base_model, stop_model, node_model, edge_model, log_z_model, jagged_trajs, log_rewards, n=1, device="cuda"):
+def get_tb_loss_add_node_mult(base_model, stop_model, node_model, edge_model, log_z_model, jagged_trajs, log_rewards, n=1, device="cuda"):
 
     base_model.train(), stop_model.train(), node_model.train(), edge_model.train(), log_z_model.train()
 
