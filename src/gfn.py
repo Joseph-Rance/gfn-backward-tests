@@ -1,9 +1,3 @@
-# TODO: backward policies to add
-#  - optimal backward
-#  - pessimistic gfns
-#  - meta learnt
-#  - increasing prob for actions under used in pf with some temp compared to optimal
-
 from math import log
 import random
 import torch
@@ -22,6 +16,37 @@ def get_num_previous_acts(state):  # (incorrect for starting state)
     edges = edges[mask][:, mask, 0]
     has_disconnected = (torch.sum(edges[:, -1]) == 0 and torch.sum(edges[-1, :]) == 0).item()
     return torch.sum(edges, dim=(0, 1)) + has_disconnected
+
+def adjust_action_idxs(action_idxs, pre_padding_lens, post_padding_len):
+    for i in range(len(action_idxs)):
+        preceeding_rows = action_idxs[i] // pre_padding_lens[i]
+        action_idxs[i] += preceeding_rows * (post_padding_len - pre_padding_lens[i])
+        if preceeding_rows == pre_padding_lens[i]:
+            action_idxs[i] += (post_padding_len - pre_padding_lens[i]) * post_padding_len
+    return action_idxs
+
+@torch.no_grad
+def is_n_connected(nodes, edges, mask, ns=[3]):
+    num_nodes = torch.sum(torch.sum(nodes, dim=1) > 0, dim=1)
+    num_edges = torch.sum(edges[:, :, 0], dim=(1, 2))
+    return num_nodes in ns and num_edges == num_nodes**2
+
+@torch.no_grad
+def get_aligned_action_idx(nodes, edges, mask):  # get actions following handmade policy (see notepad)
+    pass  # TODO
+
+def get_prob_diff(nodes, edges, mask, action_probabilities, action_type):
+
+    num_nodes = torch.sum(torch.sum(nodes, dim=1) > 0, dim=0)
+    num_edges = torch.sum(edges[:, :, 0], dim=(0, 1))
+    connected = (num_edges == num_nodes**2)
+
+    if action_type == "stop":
+        pass  # TODO: can analytically compute exact val here
+    elif action_type == "node":
+        pass  # TODO: can analytically compute max val here (since cant assign too much mass to high-node graphs)
+    else:
+        return 0  # always ok to add an edge
 
 def get_embeddings(base_model, nodes, edges, masks, device="cuda"):
 
@@ -147,14 +172,6 @@ def get_tb_loss_uniform(
     return loss, {"log_z": log_z.item(), "mean_log_reward": torch.mean(log_rewards).item(), "connected_prop": connected_prop.item(),
                   "mean_num_nodes": mean_num_nodes.item()}
 
-def adjust_action_idxs(action_idxs, pre_padding_lens, post_padding_len):
-    for i in range(len(action_idxs)):
-        preceeding_rows = action_idxs[i] // pre_padding_lens[i]
-        action_idxs[i] += preceeding_rows * (post_padding_len - pre_padding_lens[i])
-        if preceeding_rows == pre_padding_lens[i]:
-            action_idxs[i] += (post_padding_len - pre_padding_lens[i]) * post_padding_len
-    return action_idxs
-
 @process_trajs
 def get_tb_loss_add_node_mult(
         jagged_trajs, traj_lens, raw_embeddings, embedding_structure,
@@ -200,7 +217,6 @@ def get_tb_loss_add_node_mult(
 
     return loss, {"log_z": log_z.item(), "mean_log_reward": torch.mean(log_rewards).item(), "connected_prop": connected_prop.item(),
                   "mean_num_nodes": mean_num_nodes.item()}
-
 
 @process_trajs
 def get_tb_loss_tlm(
@@ -349,12 +365,6 @@ def get_tb_loss_biased_tlm(
 
     return loss, {"log_z": log_z.item(), "mean_log_reward": torch.mean(log_rewards).item(), "connected_prop": connected_prop.item(),
                   "mean_num_nodes": mean_num_nodes.item(), "tb_loss": tb_loss.detach(), "back_loss": back_loss.detach()}
-
-@torch.no_grad
-def is_n_connected(nodes, edges, mask, ns=[3]):
-    num_nodes = torch.sum(torch.sum(nodes, dim=1) > 0, dim=1)
-    num_edges = torch.sum(edges[:, :, 0], dim=(1, 2))
-    return num_nodes in ns and num_edges == num_nodes**2
 
 @process_trajs
 def get_tb_loss_free(
@@ -579,3 +589,65 @@ def get_tb_loss_const(
 
     return loss, {"log_z": log_z.item(), "mean_log_reward": torch.mean(log_rewards).item(), "connected_prop": connected_prop.item(),
                   "mean_num_nodes": mean_num_nodes.item()}
+
+@process_trajs
+def get_tb_loss_aligned(
+        jagged_trajs, traj_lens, raw_embeddings, embedding_structure,
+        actions, log_z, log_rewards,
+        stop_model, node_model, edge_model,
+        correct_val=0.9, incorrect_val=0.02,
+        device="cuda"
+    ):  # aligns backward policy with handmade policy
+
+    action_probs = get_action_probs(*raw_embeddings, *embedding_structure, stop_model, node_model, edge_model, random_action_prob=0, apply_masks=True)
+
+    log_p_f = action_probs[list(range(len(action_probs))), actions]
+    correct_actions = torch.tensor([get_aligned_action_idx(*s) for traj in jagged_trajs for s, _a in traj])
+    log_p_b = torch.where(correct_actions == actions, log(correct_val), log(incorrect_val))
+
+    final_graph_idxs = torch.cumsum(traj_lens, 0) - 1
+
+    # don't count padding states (kind of wasteful to compute these)
+    log_p_f[final_graph_idxs] = 0
+    log_p_b[final_graph_idxs] = 0
+
+    batch_idx = torch.arange(len(traj_lens), device=device).repeat_interleave(traj_lens)
+    traj_log_p_f = scatter(log_p_f.to(device), batch_idx, dim=0, dim_size=traj_lens.shape[0], reduce="sum")
+    traj_log_p_b = scatter(log_p_b.to(device), batch_idx, dim=0, dim_size=traj_lens.shape[0], reduce="sum")
+
+    traj_log_p_b = traj_log_p_b.detach()  # probably not necessary
+    log_rewards = log_rewards.to(device)
+
+    traj_diffs = (log_z + traj_log_p_f) - (log_rewards + traj_log_p_b)  # log_z gets broadcast into a vector here
+    loss = huber(traj_diffs).mean()
+
+    connected_prop = mean_num_nodes = 0
+    for traj in jagged_trajs:
+        nodes, edges, _mask = traj[-2][0]
+        num_nodes = torch.sum(torch.sum(nodes, dim=1) > 0, dim=0)
+        num_edges = torch.sum(edges[:, :, 0], dim=(0, 1))
+        connected_prop += (num_edges == num_nodes**2) / len(jagged_trajs)
+        mean_num_nodes += num_nodes / len(jagged_trajs)
+
+    return loss, {"log_z": log_z.item(), "mean_log_reward": torch.mean(log_rewards).item(), "connected_prop": connected_prop.item(),
+                  "mean_num_nodes": mean_num_nodes.item()}
+
+@process_trajs
+def get_tb_loss_adjusted(
+        jagged_trajs, traj_lens, raw_embeddings, embedding_structure,
+        actions, log_z, log_rewards,
+        stop_model, node_model, edge_model,
+        multiplier=1, uniform_smoothing=0,  # multiplier applied to differece between forward policies to yield backward policy
+        device="cuda"                       # uniform smoothing interpellates with uniform policy
+    ):  # adjusts backward policy with difference between correct and current forward policies
+    pass  # TODO: using get_prob_diff
+
+@process_trajs
+def get_tb_loss_pessimistic(
+        jagged_trajs, traj_lens, raw_embeddings, embedding_structure,
+        actions, log_z, log_rewards,
+        stop_model, node_model, edge_model,
+        value=0.2,
+        device="cuda"
+    ):
+    pass  # TODO: pessimistic backward policy
