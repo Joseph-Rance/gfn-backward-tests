@@ -75,7 +75,7 @@ def get_action_probs(
 
 def process_trajs(get_loss_fn):
 
-    def get_loss_fn_from_trajs(jagged_trajs, log_rewards, base_model, log_z_model, *model_heads, device="cuda", **kwargs):
+    def get_loss_fn_from_trajs(jagged_trajs, log_rewards, base_model, log_z_model, *model_heads, constant_log_z=None, device="cuda", **kwargs):
 
         for m in itertools.chain([base_model], model_heads):
             m.train()
@@ -94,7 +94,7 @@ def process_trajs(get_loss_fn):
         actions = adjust_action_idxs(torch.tensor([a for _s, a in trajs]), pre_padding_lens, post_padding_len)
         
         embeddings = get_embeddings(base_model, nodes, edges, masks, device=device)
-        log_z = log_z_model(torch.tensor([[1.]], device=device))
+        log_z = constant_log_z if constant_log_z else log_z_model(torch.tensor([[1.]], device=device))
 
         return get_loss_fn(jagged_trajs, traj_lens, *embeddings, actions, log_z, log_rewards, *model_heads, device=device, **kwargs)
 

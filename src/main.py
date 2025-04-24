@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 from graph_transformer_pytorch import GraphTransformer
 
-from data_source import GFNSampler, get_reward_fn_generator, get_smoothed_log_reward
+from data_source import GFNSampler, get_reward_fn_generator, get_smoothed_log_reward, get_uncertain_smoothed_log_reward
 from gfn import (
     get_tb_loss_uniform,
     get_tb_loss_adjusted_uniform,
@@ -35,13 +35,15 @@ parser.add_argument("-t", "--num-test-graphs", default=0, help="number of graphs
 
 # env
 parser.add_argument("-b", "--base", default=0.8, help="base for exponent used in reward calculation")
+parser.add_argument("-r", "--reward_idx", default=0, help="index of reward function to use")
 
 # model
 parser.add_argument("-f", "--num-features", default=10, help="number of features used to represent each node/edge (min 2)")
 parser.add_argument("-d", "--depth", default=1, help="depth of the transformer model")
 parser.add_argument("-g", "--max-nodes", default=8, help="maximum number of nodes in a generated graph")
-parser.add_argument("-x", "--max-len", default=80, help="maximum number of actions per trajectory")
-parser.add_argument("-r", "--random-action-template", default=2, help="index of the random action config to use (see code)")
+parser.add_argument("-k", "--max-len", default=80, help="maximum number of actions per trajectory")
+parser.add_argument("-q", "--random-action-template", default=2, help="index of the random action config to use (see code)")
+parser.add_argument("-z", "--log-z", default=None, help="constant value of log(z) to use (learnt if None)")
 
 # training
 parser.add_argument("-l", "--loss-fn", default="tb-uniform", help="loss function for training (e.g. TB + uniform backward policy)")
@@ -49,6 +51,7 @@ parser.add_argument("-v", "--loss-arg-a", default=1)
 parser.add_argument("-u", "--loss-arg-b", default=1)
 parser.add_argument("-m", "--batch-size", default=32)
 parser.add_argument("-p", "--num-precomputed", default=16, help="number of trajectories from precomputed, fully connected graphs")
+parser.add_argument("-i", "--edges-first", default=False, help="whether to add edges before nodes in precomputed trajectories")
 parser.add_argument("-a", "--learning-rate", default=0.00001)
 parser.add_argument("-n", "--max-update-norm", default=100)
 parser.add_argument("-e", "--num-batches", default=5_000)
@@ -114,6 +117,9 @@ configs = {
 get_loss, config = configs[args.loss_fn]
 parameterise_backward = config["parameterise_backward"]
 
+reward_fns = [get_smoothed_log_reward, get_uncertain_smoothed_log_reward]
+reward_fn = reward_fns[args.reward_idx]
+
 #compile = lambxa x: torch.compile(x)
 compile = lambda x: x
 
@@ -151,26 +157,25 @@ main_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(main_optimiser, T_ma
 fwd_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(fwd_optimiser, T_max=args.num_batches)
 log_z_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(log_z_optimiser, T_max=args.num_batches)
 
+reward_fn_generator = get_reward_fn_generator(reward_fn, base=args.base)
+
+data_source = GFNSampler(base_model, *fwd_models, reward_fn_generator,
+                         node_features=args.num_features, edge_features=args.num_features,
+                         random_action_prob=random_prob, max_len=args.max_len, max_nodes=args.max_nodes, base=args.base,
+                         batch_size=args.batch_size, num_precomputed=args.num_precomputed, edges_first=args.edges_first,
+                         device=args.device)
+data_loader = torch.utils.data.DataLoader(data_source, batch_size=None)
 
 if __name__ == "__main__":
 
     torch.set_float32_matmul_precision('high')
     torch.backends.cudnn.benchmark = True
 
-    reward_fn_generator = get_reward_fn_generator(get_smoothed_log_reward, base=args.base)
-
-    data_source = GFNSampler(base_model, *fwd_models, reward_fn_generator,
-                             node_features=args.num_features, edge_features=args.num_features,
-                             random_action_prob=random_prob, max_len=args.max_len, max_nodes=args.max_nodes, base=args.base,
-                             batch_size=args.batch_size, num_precomputed=args.num_precomputed,
-                             device=args.device)
-    data_loader = torch.utils.data.DataLoader(data_source, batch_size=None)
-
     sum_loss = mean_log_reward = mean_connected_prop = mean_num_nodes = 0
 
     for it, (jagged_trajs, log_rewards) in zip(range(args.num_batches), data_loader):
 
-        loss, metrics = get_loss(jagged_trajs, log_rewards, base_model, log_z_model, *fwd_models, *bck_models, device=args.device)
+        loss, metrics = get_loss(jagged_trajs, log_rewards, base_model, log_z_model, *fwd_models, *bck_models, constant_log_z=args.log_z, device=args.device)
         loss.backward()
 
         params = itertools.chain(*(m.parameters() for m in (base_model, *fwd_models, *bck_models, log_z_model)))
@@ -204,7 +209,7 @@ if __name__ == "__main__":
                     num_nodes = torch.sum(torch.sum(nodes, dim=1) > 0, dim=0)
                     num_edges = torch.sum(edges[:, :, 0], dim=(0, 1))
 
-                    test_mean_log_reward += get_smoothed_log_reward(nodes.reshape((1, *nodes.shape)), edges.reshape((1, *edges.shape)), alpha=1_000_000).item()
+                    test_mean_log_reward += reward_fn(nodes.reshape((1, *nodes.shape)), edges.reshape((1, *edges.shape)), alpha=1_000_000).item()
                     test_mean_connected_prop += float(num_edges == num_nodes**2)
                     test_node_counts.append(num_nodes.item())
 

@@ -14,6 +14,15 @@ def get_smoothed_log_reward(nodes, edges, base=0.8, alpha=10):
     fully_connectedness = (num_edges - num_nodes**2) ** 2
     return torch.clamp(log(base) * num_nodes - alpha * fully_connectedness, min=-1_000)
 
+def get_uncertain_smoothed_log_reward(nodes, edges, base=0.8, alpha=10, base_std=0.1, added_std_nodes=[0, 2, 4, 6, 8, 10], added_std=0.1, eta=0.001):
+    num_nodes = torch.sum(torch.sum(nodes, dim=2) > 0, dim=1)
+    num_edges = torch.sum(edges[:, :, :, 0], dim=(1, 2))
+    #return torch.logical_and(num_nodes == 2, num_edges == 0).long()  # (for testing)
+    fully_connectedness = (num_edges - num_nodes**2) ** 2
+    noise_std = base_std + (added_std if num_nodes in added_std_nodes else 0)
+    noise = torch.normal(mean=0, std=noise_std, size=(num_nodes.shape,))
+    return torch.clamp(log(max(base ** num_nodes + noise, eta)) - alpha * fully_connectedness, min=-1_000)
+
 def get_reward_fn_generator(reward_fn, base=0.8, alpha_start=0.75, alpha_change=1.02):
     alpha = alpha_start
     while True:
@@ -38,6 +47,7 @@ class GFNSampler(IterableDataset):
         max_nodes=10,
         batch_size=128,
         num_precomputed=64,
+        edges_first=False,
         max_precomputed_len=4,
         base=0.8,
         node_history_bounds=(0, 1),  # inclusive
@@ -63,6 +73,7 @@ class GFNSampler(IterableDataset):
         self.max_nodes = max_nodes
         self.batch_size = batch_size
         self.num_precomputed = num_precomputed
+        self.edges_first = edges_first
         self.max_precomputed_len = max_precomputed_len
         self.base = base
         self.node_history_bounds = node_history_bounds
@@ -289,17 +300,34 @@ class GFNSampler(IterableDataset):
 
                 actions = []
 
-                size = self.start_size
-                for n_i in range(int(n)-1):
-                    actions += [size**2]
-                    if n_i+1 == size:
-                        size *= self.expand_factor
+                if not self.edges_first:
 
-                for j in range(int(n)):
-                    for k in range(int(n)):
-                        actions += [j * size + k]
+                    size = self.start_size
+                    for n_i in range(int(n)-1):
+                        actions += [size**2]
+                        if n_i+1 == size:
+                            size *= self.expand_factor
 
-                actions += [size**2 + 1]
+                    for j in range(int(n)):
+                        for k in range(int(n)):
+                            actions += [j * size + k]
+
+                    actions += [size**2 + 1]
+                
+                else:
+
+                    size = self.start_size
+
+                    actions += [0]
+
+                    for n_i in range(int(n)-1):
+                        actions += [size**2, (n_i + 1) * size + n_i + 1]
+                        for i in range(n_i + 1):
+                            actions += [(n_i + 1) * size + i, i * size + (n_i + 1)]
+                        if n_i+1 == size:
+                            size *= self.expand_factor
+
+                    actions += [size**2 + 1]
 
                 for selected_action_idx in actions:
 
