@@ -2,7 +2,7 @@ from math import log
 import torch
 
 
-@torch.no_grad
+@torch.no_grad()
 def get_num_previous_acts(state):  # (incorrect for starting state)
     nodes, edges, mask = state
     if nodes[0, -1].item() == 1:
@@ -19,13 +19,13 @@ def adjust_action_idxs(action_idxs, pre_padding_lens, post_padding_len):
             action_idxs[i] += (post_padding_len - pre_padding_lens[i]) * post_padding_len
     return action_idxs
 
-@torch.no_grad
+@torch.no_grad()
 def is_n_connected(nodes, edges, mask, ns=[3]):
     num_nodes = torch.sum(torch.sum(nodes, dim=1) > 0, dim=1)
     num_edges = torch.sum(edges[:, :, 0], dim=(1, 2))
     return num_nodes in ns and num_edges == num_nodes**2
 
-@torch.no_grad
+@torch.no_grad()
 def get_aligned_action_log_prob(nodes, edges, _mask, action_idx, b=0.8, correct_log_prob=log(0.9), incorrect_log_prob=log(0.02)):  # get actions following handmade policy (see notepad)
 
     num_nodes = torch.sum(torch.sum(nodes, dim=1) > 0, dim=0)
