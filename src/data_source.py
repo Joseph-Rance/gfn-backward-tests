@@ -19,7 +19,7 @@ def get_reward_fn_generator(reward_fn, base=0.8, alpha_start=0.75, alpha_change=
     while True:
         yield lambda *args, **kwargs: reward_fn(*args, base=base, alpha=alpha, **kwargs)
         alpha *= alpha_change
-        alpha = min(alpha, 1_000_000)  # TODO: WAS GOOD WITH MAX?
+        alpha = min(alpha, 1_000_000)
 
 
 class GFNSampler(IterableDataset):
