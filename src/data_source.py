@@ -43,6 +43,7 @@ class GFNSampler(IterableDataset):
         node_features=10,
         edge_features=10,
         random_action_prob=0.5,
+        adjust_random=None,
         max_len=500,
         max_nodes=10,
         batch_size=128,
@@ -69,6 +70,7 @@ class GFNSampler(IterableDataset):
         self.node_features = node_features
         self.edge_features = edge_features
         self.random_action_prob = random_action_prob
+        self.adjust_random = adjust_random
         self.max_len = max_len
         self.max_nodes = max_nodes
         self.batch_size = batch_size
@@ -162,6 +164,7 @@ class GFNSampler(IterableDataset):
                 self.node_model,
                 self.edge_model, 
                 random_action_prob=self.random_action_prob,
+                adjust_random=self.adjust_random,
                 apply_masks=True,
                 max_nodes=self.max_nodes,
                 masked_action_value=self.masked_action_value,

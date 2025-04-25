@@ -37,7 +37,7 @@ def get_action_probs(
         node_embeddings, edge_embeddings, global_embedding,
         inverse_indices, unique_masks, unique_edges,
         stop_model, node_model, edge_model,
-        random_action_prob=0, apply_masks=True, max_nodes=8,
+        random_action_prob=0, adjust_random=None, apply_masks=True, max_nodes=8,
         masked_action_value=-80, action_prob_clip_bounds=(-75, 75)
     ):
 
@@ -50,7 +50,7 @@ def get_action_probs(
     clipped_node_pred = torch.clamp(node_pred, min=action_prob_clip_bounds[0], max=action_prob_clip_bounds[1])
     clipped_edge_pred = torch.clamp(edge_pred, min=action_prob_clip_bounds[0], max=action_prob_clip_bounds[1])
 
-    rand_acts = random.choices(list(range(node_embeddings.shape[0])), k=round(node_embeddings.shape[0] * random_action_prob))
+    rand_acts = random.sample(list(range(node_embeddings.shape[0])), k=round(node_embeddings.shape[0] * random_action_prob))
     clipped_stop_pred[rand_acts] = clipped_node_pred[rand_acts] = clipped_edge_pred[rand_acts] = 1
 
     if apply_masks:
@@ -59,12 +59,37 @@ def get_action_probs(
         edge_action_mask = torch.logical_and(torch.transpose(repeated_mask, 1, 2), repeated_mask)  # out-of-domain actions
         edge_action_mask[unique_edges] = False  # repeated actions
         edge_action_mask = edge_action_mask.reshape((node_embeddings.shape[0], -1))
-        clipped_edge_pred[~edge_action_mask] = masked_action_value
-
         node_action_mask = torch.sum(unique_masks, dim=1) < max_nodes
-        clipped_node_pred[~node_action_mask] = masked_action_value
+    
+    else:
 
-    unique_action_probs = torch.concat((clipped_edge_pred, clipped_node_pred, clipped_stop_pred), dim=1)
+        edge_action_mask = torch.ones(clipped_edge_pred.shape)
+        node_action_mask = torch.ones(clipped_node_pred.shape)
+
+    clipped_edge_pred[~edge_action_mask] = masked_action_value
+    clipped_node_pred[~node_action_mask] = masked_action_value
+
+    if adjust_random:
+
+        adjusted_clipped_edge_pred = torch.clone(clipped_edge_pred)
+        adjusted_clipped_stop_pred = torch.clone(clipped_stop_pred)
+
+        random_edge_action_mask = torch.zeros(clipped_edge_pred.shape, dtype=bool)
+        random_edge_action_mask[rand_acts] = edge_action_mask[rand_acts]
+
+        adjusted_clipped_edge_pred[random_edge_action_mask] = (torch.div(
+            clipped_edge_pred.T,
+            torch.sum(clipped_edge_pred * random_edge_action_mask, dim=1)
+        ).T[random_edge_action_mask] * adjust_random).detach()
+
+        adjusted_clipped_stop_pred[rand_acts] = (adjusted_clipped_stop_pred[rand_acts] / adjust_random).detach()
+
+    else:
+
+        adjusted_clipped_edge_pred = clipped_edge_pred
+        adjusted_clipped_stop_pred = clipped_stop_pred
+
+    unique_action_probs = torch.concat((adjusted_clipped_edge_pred, clipped_node_pred, adjusted_clipped_stop_pred), dim=1)
 
     corr_unique_action_probs = unique_action_probs - torch.max(unique_action_probs)  # to avoid overflow
     norm_unique_action_probs = corr_unique_action_probs - torch.logsumexp(corr_unique_action_probs, dim=1).reshape((-1, 1))  # log softmax

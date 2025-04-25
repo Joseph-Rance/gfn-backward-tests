@@ -31,7 +31,7 @@ parser.add_argument("-s", "--seed", default=1)
 parser.add_argument("-w", "--device", default="cuda", help="generally 'cuda' or 'cpu'")
 parser.add_argument("-o", "--save", default=False, help="whether to save outputs to a file")
 parser.add_argument("-c", "--cycle-len", default=5, help="how often to log/checkpoint (number of batches)")
-parser.add_argument("-t", "--num-test-graphs", default=0, help="number of graphs to generate for estimating metrics")
+parser.add_argument("-t", "--num-test-graphs", default=64, help="number of graphs to generate for estimating metrics")
 
 # env
 parser.add_argument("-b", "--base", default=0.8, help="base for exponent used in reward calculation")
@@ -228,7 +228,7 @@ if __name__ == "__main__":
 
                 # 0.8 should have 1: 13, 2: 10, 3: 08, 4: 07, 5: 05, 6: 04, 7: 03, 8: 03
                 print(
-                    f"{it: <5} loss: {sum_loss.item():8.2f}; " \
+                    f"{it: <5} loss: {sum_loss.item():7.2f}; " \
                     f"norm: {norm:6.3f}; " \
                     f"log(z): {metrics['log_z']:6.3f}; " \
                     f"mean log reward: {test_mean_log_reward:8.3f} ({mean_log_reward:8.3f}); " \
