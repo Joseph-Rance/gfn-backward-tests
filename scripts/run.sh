@@ -1,1 +1,1 @@
-python src/main.py
+PYTHONHASHSEED=0 python src/main.py

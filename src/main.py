@@ -20,41 +20,44 @@ from gfn import (
     get_tb_loss_maxent,
     get_tb_loss_tlm,
     get_tb_loss_biased_tlm,
-    get_tb_loss_smooth_tlm
+    get_tb_loss_smooth_tlm,
+    get_action_log_probs_test_helper
 )
 
 
 parser = argparse.ArgumentParser()
 
 # general
-parser.add_argument("-s", "--seed", default=1)
-parser.add_argument("-w", "--device", default="cuda", help="generally 'cuda' or 'cpu'")
-parser.add_argument("-o", "--save", default=False, help="whether to save outputs to a file")
-parser.add_argument("-c", "--cycle-len", default=5, help="how often to log/checkpoint (number of batches)")
-parser.add_argument("-t", "--num-test-graphs", default=64, help="number of graphs to generate for estimating metrics")
+parser.add_argument("-s", "--seed", type=int, default=1)
+parser.add_argument("-d", "--device", type=str, default="cuda", help="generally 'cuda' or 'cpu'")
+parser.add_argument("-o", "--save", action="store_true", default=False, help="whether to save outputs to a file")
+parser.add_argument("-x", "--test-template", action="store_true", default=False, help="whether to record P_B and P_F embeddings and loss using the results/s/template.npy")
+parser.add_argument("-c", "--cycle-len", type=int, default=5, help="how often to log/checkpoint (number of batches)")
+parser.add_argument("-t", "--num-test-graphs", type=int, default=64, help="number of graphs to generate for estimating metrics")
 
 # env
-parser.add_argument("-b", "--base", default=0.8, help="base for exponent used in reward calculation")
-parser.add_argument("-r", "--reward_idx", default=0, help="index of reward function to use")
+parser.add_argument("-b", "--base", type=float, default=0.8, help="base for exponent used in reward calculation")
+parser.add_argument("-r", "--reward_idx", type=int, default=0, help="index of reward function to use")
 
 # model
-parser.add_argument("-f", "--num-features", default=10, help="number of features used to represent each node/edge (min 2)")
-parser.add_argument("-d", "--depth", default=1, help="depth of the transformer model")
-parser.add_argument("-g", "--max-nodes", default=8, help="maximum number of nodes in a generated graph")
-parser.add_argument("-k", "--max-len", default=80, help="maximum number of actions per trajectory")
-parser.add_argument("-q", "--random-action-template", default=2, help="index of the random action config to use (see code)")
-parser.add_argument("-z", "--log-z", default=None, help="constant value of log(z) to use (learnt if None)")
+parser.add_argument("-f", "--num-features", type=int, default=10, help="number of features used to represent each node/edge (min 2)")
+parser.add_argument("-y", "--depth", type=int, default=1, help="depth of the transformer model")
+parser.add_argument("-g", "--max-nodes", type=int, default=8, help="maximum number of nodes in a generated graph")
+parser.add_argument("-k", "--max-len", type=int, default=80, help="maximum number of actions per trajectory")
+parser.add_argument("-q", "--random-action-template", type=int, default=2, help="index of the random action config to use (see code)")
+parser.add_argument("-z", "--log-z", type=int, default=0, help="constant value of log(z) to use (learnt if None)")
 
 # training
-parser.add_argument("-l", "--loss-fn", default="tb-uniform", help="loss function for training (e.g. TB + uniform backward policy)")
-parser.add_argument("-v", "--loss-arg-a", default=1)
-parser.add_argument("-u", "--loss-arg-b", default=1)
-parser.add_argument("-m", "--batch-size", default=32)
-parser.add_argument("-p", "--num-precomputed", default=16, help="number of trajectories from precomputed, fully connected graphs")
-parser.add_argument("-i", "--edges-first", default=False, help="whether to add edges before nodes in precomputed trajectories")
-parser.add_argument("-a", "--learning-rate", default=0.00001)
-parser.add_argument("-n", "--max-update-norm", default=100)
-parser.add_argument("-e", "--num-batches", default=5_000)
+parser.add_argument("-l", "--loss-fn", type=str, default="tb-uniform", help="loss function for training (e.g. TB + uniform backward policy)")
+parser.add_argument("-v", "--loss-arg-a", type=float, default=1)
+parser.add_argument("-u", "--loss-arg-b", type=float, default=1)
+parser.add_argument("-w", "--loss-arg-c", type=float, default=1)
+parser.add_argument("-m", "--batch-size", type=int, default=32)
+parser.add_argument("-p", "--num-precomputed", type=int, default=16, help="number of trajectories from precomputed, fully connected graphs")
+parser.add_argument("-i", "--edges-first", action="store_true", default=False, help="whether to add edges before nodes in precomputed trajectories")
+parser.add_argument("-a", "--learning-rate", type=float, default=0.00001)
+parser.add_argument("-n", "--max-update-norm", type=float, default=99.9)
+parser.add_argument("-e", "--num-batches", type=int, default=5_000)
 
 args = parser.parse_args()
 
@@ -69,27 +72,27 @@ configs = {
         {"parameterise_backward": False}
     ),
     "tb-adjusted-uniform": (  # uniform backward policy, with added adjustments to encourage the optimal forward policy
-        lambda *args, **kwargs: get_tb_loss_adjusted_uniform(*args, base=args.base, **kwargs),
+        lambda *pargs, **kwargs: get_tb_loss_adjusted_uniform(*pargs, base=args.base, **kwargs),
         {"parameterise_backward": False}
     ),
     "tb-uniform-add-node": (  # uniform backward policy with an added bias towards adding nodes
-        lambda *args, **kwargs: get_tb_loss_add_node_mult(*args, n=args.loss_arg_a, **kwargs),
+        lambda *pargs, **kwargs: get_tb_loss_add_node_mult(*pargs, n=args.loss_arg_a, **kwargs),
         {"parameterise_backward": False}
     ),
     "tb-uniform-const": (  # uniform backward policy with a constant (unnormalised) backward probability
-        lambda *args, **kwargs: get_tb_loss_const(*args, val=args.loss_arg_a, **kwargs),
+        lambda *pargs, **kwargs: get_tb_loss_const(*pargs, value=args.loss_arg_a, **kwargs),
         {"parameterise_backward": False}
     ),
     "tb-uniform-rand": (  # uniform backward probabilities randomly perturbed by noised sampled from a uniform distribution
-        lambda *args, **kwargs: get_tb_loss_rand_const(*args, mean=args.loss_arg_a, std=args.loss_arg_b, **kwargs),
+        lambda *pargs, **kwargs: get_tb_loss_rand_const(*pargs, mean=args.loss_arg_a, std=args.loss_arg_b, seed=args.loss_arg_c, **kwargs),
         {"parameterise_backward": False}
     ),
     "tb-uniform-rand-var": (  # backward probabilities randomly resampled from a normal distribution on each application
-        lambda *args, **kwargs: get_tb_loss_rand_var(*args, mean=args.loss_arg_a, std=args.loss_arg_b, **kwargs),
+        lambda *pargs, **kwargs: get_tb_loss_rand_var(*pargs, mean=args.loss_arg_a, std=args.loss_arg_b, **kwargs),
         {"parameterise_backward": False}
     ),
     "tb-aligned": (  # aligned to handmade backward policy
-        lambda *args, **kwargs: get_tb_loss_aligned(*args, base=args.base, correct_val=args.loss_arg_a, incorrect_val=args.loss_arg_b, **kwargs),
+        lambda *pargs, **kwargs: get_tb_loss_aligned(*pargs, base=args.base, correct_val=args.loss_arg_a, incorrect_val=args.loss_arg_b, **kwargs),
         {"parameterise_backward": False}
     ),
     "tb-free": (  # TB loss backpropagated to backward policy
@@ -105,12 +108,12 @@ configs = {
         {"parameterise_backward": True}
     ),
     "tb-weighted-tlm": (  # TLM / pessimistic with weights toward ns nodes
-        lambda *args, **kwargs: get_tb_loss_biased_tlm(*args, multiplier=args.loss_arg_a, ns=[args.loss_arg_b], **kwargs),
+        lambda *pargs, **kwargs: get_tb_loss_biased_tlm(*pargs, multiplier=args.loss_arg_a, ns=[args.loss_arg_b], **kwargs),
         {"parameterise_backward": True}
     ),
     "tb-smoothed-tlm": (  # TLM / pessimistic mixed with a uniform distribution
-        lambda *args, **kwargs: get_tb_loss_smooth_tlm(*args, a=args.loss_arg_a, **kwargs),  # maybe cosine annealing curve from 1 to 0 over time?
-        {"parameterise_backward": True}
+        lambda *pargs, **kwargs: get_tb_loss_smooth_tlm(*pargs, a=args.loss_arg_a, **kwargs),  # maybe cosine annealing curve from 1 to 0 over time?
+        {"parameterise_backward": True}                                                        # or does it not matter because the backward policy will eventually compensate
     )
 }
 
@@ -131,7 +134,7 @@ fwd_edge_model = compile(nn.Sequential(nn.Linear(args.num_features*3, args.num_f
 fwd_models = [fwd_stop_model, fwd_node_model, fwd_edge_model]
 
 if parameterise_backward:
-    bck_stop_model = compile(nn.Sequential(nn.Linear(args.num_features, args.num_featuresargs.num_features*2), nn.LeakyReLU(), nn.Linear(args.num_features*2, 1))).to(args.device)
+    bck_stop_model = compile(nn.Sequential(nn.Linear(args.num_features, args.num_features*2), nn.LeakyReLU(), nn.Linear(args.num_features*2, 1))).to(args.device)
     bck_node_model = compile(nn.Sequential(nn.Linear(args.num_features, args.num_features*2), nn.LeakyReLU(), nn.Linear(args.num_features*2, 1))).to(args.device)
     bck_edge_model = compile(nn.Sequential(nn.Linear(args.num_features*3, args.num_features*3*2), nn.LeakyReLU(), nn.Linear(args.num_features*3*2, 1))).to(args.device)
     bck_models = [bck_stop_model, bck_node_model, bck_edge_model]
@@ -157,6 +160,10 @@ main_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(main_optimiser, T_ma
 fwd_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(fwd_optimiser, T_max=args.num_batches)
 log_z_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(log_z_optimiser, T_max=args.num_batches)
 
+if parameterise_backward:
+    bck_optimiser = torch.optim.Adam(itertools.chain(*(i.parameters() for i in bck_models)), lr=args.learning_rate*10, weight_decay=1e-4)
+    bck_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(bck_optimiser, T_max=args.num_batches)
+
 reward_fn_generator = get_reward_fn_generator(reward_fn, base=args.base)
 
 data_source = GFNSampler(base_model, *fwd_models, reward_fn_generator,
@@ -171,7 +178,11 @@ if __name__ == "__main__":
     torch.set_float32_matmul_precision('high')
     torch.backends.cudnn.benchmark = True
 
+    losses = []
     sum_loss = mean_log_reward = mean_connected_prop = mean_num_nodes = 0
+
+    if parameterise_backward:  # TODO: needs updating to adapt to all possible configs
+        sum_loss_fwd = sum_loss_bck = 0
 
     for it, (jagged_trajs, log_rewards) in zip(range(args.num_batches), data_loader):
 
@@ -192,12 +203,24 @@ if __name__ == "__main__":
         fwd_scheduler.step()
         log_z_scheduler.step()
 
+        if parameterise_backward:
+            bck_optimiser.step()
+            bck_optimiser.zero_grad()
+            bck_scheduler.step()
+
         sum_loss += loss.detach() / args.cycle_len
         mean_log_reward += metrics["mean_log_reward"] / args.cycle_len
         mean_connected_prop += metrics["connected_prop"] / args.cycle_len
         mean_num_nodes += metrics["mean_num_nodes"] / args.cycle_len
 
+        if parameterise_backward:
+            sum_loss_fwd += metrics["tb_loss"] / args.cycle_len
+            sum_loss_bck += metrics["back_loss"] / args.cycle_len
+
         with torch.no_grad():
+
+            for m in (base_model, log_z_model, *fwd_models, *bck_models):
+                m.eval()
 
             if (it+1)%args.cycle_len == 0:
 
@@ -228,8 +251,9 @@ if __name__ == "__main__":
 
                 # 0.8 should have 1: 13, 2: 10, 3: 08, 4: 07, 5: 05, 6: 04, 7: 03, 8: 03
                 print(
-                    f"{it: <5} loss: {sum_loss.item():7.2f}; " \
-                    f"norm: {norm:6.3f}; " \
+                    f"{it: <5} loss: {sum_loss.item():7.2f}" \
+                      + (f" (fwd: {sum_loss_fwd.item():7.2f}, bck: {sum_loss_bck.item():7.2f})" if parameterise_backward else "") + \
+                    f"; norm: {norm:6.3f}; " \
                     f"log(z): {metrics['log_z']:6.3f}; " \
                     f"mean log reward: {test_mean_log_reward:8.3f} ({mean_log_reward:8.3f}); " \
                     f"connected: {test_mean_connected_prop:4.2f} ({mean_connected_prop:4.2f}); " \
@@ -238,7 +262,32 @@ if __name__ == "__main__":
                     f"({mean_num_nodes:3.1f}; {len(graphs)}), {', '.join([f'{i}: {test_node_count_distribution[i]:0>2}' for i in range(1, 9)])}"
                 )
 
+
+                if args.test_template:  # TODO: temp (integrate this in with normal running)
+
+                    total_loss = 0
+                    for i in range(64):
+                        jagged_trajs, log_rewards = next(data_source)
+                        loss, metrics = get_loss(
+                            jagged_trajs, log_rewards, base_model, log_z_model, *fwd_models, *bck_models, constant_log_z=args.log_z, device=args.device
+                        )
+                        total_loss += metrics["tb_loss"]
+
+                    losses.append(total_loss.item())
+                    np.save(f"results/losses.npy", np.array(losses))
+
+                    for nodes, edges, masks in np.load("results/s/template.npy", allow_pickle=True):
+                        fwd_action_probs, bck_action_probs = get_action_log_probs_test_helper(nodes, edges, masks, args.loss_fn,
+                                                                                              base_model, fwd_models, bck_models, log_z_model,
+                                                                                              args.log_z, args.loss_arg_a, args.loss_arg_b, args.loss_arg_c,
+                                                                                              device=args.device)
+                        np.save(f"results/embeddings/fwd_{it}.npy", torch.flatten(fwd_action_probs).to("cpu").numpy())
+                        np.save(f"results/embeddings/bck_{it}.npy", torch.flatten(bck_action_probs).to("cpu").numpy())
+
                 sum_loss = mean_log_z = mean_log_reward = mean_connected_prop = mean_num_nodes = 0
+
+                if parameterise_backward:  # needs updating to adapt to all possible configs
+                    sum_loss_fwd = sum_loss_bck = 0
 
                 data_source.random_action_prob = max(random_prob_min, data_source.random_action_prob * random_prob_decay)
 

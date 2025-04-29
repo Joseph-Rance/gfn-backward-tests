@@ -1,5 +1,4 @@
 from math import log
-import itertools
 import random
 import torch
 import torch.nn as nn
@@ -63,8 +62,8 @@ def get_action_probs(
     
     else:
 
-        edge_action_mask = torch.ones(clipped_edge_pred.shape)
-        node_action_mask = torch.ones(clipped_node_pred.shape)
+        edge_action_mask = torch.ones(clipped_edge_pred.shape, dtype=bool)
+        node_action_mask = torch.ones(clipped_node_pred.shape, dtype=bool)
 
     clipped_edge_pred[~edge_action_mask] = masked_action_value
     clipped_node_pred[~node_action_mask] = masked_action_value
@@ -102,7 +101,7 @@ def process_trajs(get_loss_fn):
 
     def get_loss_fn_from_trajs(jagged_trajs, log_rewards, base_model, log_z_model, *model_heads, constant_log_z=None, device="cuda", **kwargs):
 
-        for m in itertools.chain([base_model], model_heads):
+        for m in (base_model, *model_heads):
             m.train()
 
         # flatten inputs from jagged list
@@ -117,9 +116,9 @@ def process_trajs(get_loss_fn):
         pre_padding_lens = [n.shape[0] for (n, _e, _m), _a in trajs]
         post_padding_len = nodes.shape[1]
         actions = adjust_action_idxs(torch.tensor([a for _s, a in trajs]), pre_padding_lens, post_padding_len)
-        
+
         embeddings = get_embeddings(base_model, nodes, edges, masks, device=device)
-        log_z = constant_log_z if constant_log_z else log_z_model(torch.tensor([[1.]], device=device))
+        log_z = constant_log_z if constant_log_z > 0 else log_z_model(torch.tensor([[1.]], device=device))
 
         return get_loss_fn(jagged_trajs, traj_lens, *embeddings, actions, log_z, log_rewards, *model_heads, device=device, **kwargs)
 
@@ -156,7 +155,7 @@ def get_tb_loss_uniform(
         mean_num_nodes += num_nodes / len(jagged_trajs)
 
     return loss, {"log_z": log_z.item(), "mean_log_reward": torch.mean(log_rewards).item(), "connected_prop": connected_prop.item(),
-                  "mean_num_nodes": mean_num_nodes.item()}
+                  "mean_num_nodes": mean_num_nodes.item(), "tb_loss": loss.detach()}
 
 @process_trajs
 def get_tb_loss_add_node_mult(
@@ -202,7 +201,7 @@ def get_tb_loss_add_node_mult(
         mean_num_nodes += num_nodes / len(jagged_trajs)
 
     return loss, {"log_z": log_z.item(), "mean_log_reward": torch.mean(log_rewards).item(), "connected_prop": connected_prop.item(),
-                  "mean_num_nodes": mean_num_nodes.item()}
+                  "mean_num_nodes": mean_num_nodes.item(), "tb_loss": loss.detach()}
 
 @process_trajs
 def get_tb_loss_tlm(
@@ -279,10 +278,10 @@ def get_tb_loss_smooth_tlm(
     traj_log_p_b_tlm = scatter(log_p_b.to(device), batch_idx, dim=0, dim_size=traj_lens.shape[0], reduce="sum")
 
     back_loss = -traj_log_p_b_tlm.mean()
-    traj_log_p_b_tlm = traj_log_p_b_tlm.detach()
+    tlm_traj_log_p_b = traj_log_p_b_tlm.detach()
 
-    traj_unfiorm_log_p_b = torch.tensor([-sum([log(get_num_previous_acts(s)) for s, _a in t[1:]]) for t in jagged_trajs], device=device)
-    traj_log_p_b = (1-a) * traj_log_p_b_tlm + (a) * traj_unfiorm_log_p_b
+    uniform_log_p_b = torch.tensor([-sum([log(get_num_previous_acts(s)) for s, _a in t[1:]]) for t in jagged_trajs], device=device)
+    traj_log_p_b = (1-a) * tlm_traj_log_p_b + (a) * uniform_log_p_b
 
     log_rewards = log_rewards.to(device)
 
@@ -382,9 +381,7 @@ def get_tb_loss_free(
     log_rewards = log_rewards.to(device)
 
     traj_diffs = (log_z + traj_log_p_f) - (log_rewards + traj_log_p_b)  # log_z gets broadcast into a vector here
-    tb_loss = huber(traj_diffs).mean()
-    
-    loss = tb_loss
+    loss = huber(traj_diffs).mean()
 
     connected_prop = mean_num_nodes = 0
     for traj in jagged_trajs:
@@ -395,7 +392,7 @@ def get_tb_loss_free(
         mean_num_nodes += num_nodes / len(jagged_trajs)
 
     return loss, {"log_z": log_z.item(), "mean_log_reward": torch.mean(log_rewards).item(), "connected_prop": connected_prop.item(),
-                  "mean_num_nodes": mean_num_nodes.item(), "tb_loss": tb_loss.detach()}
+                  "mean_num_nodes": mean_num_nodes.item(), "tb_loss": loss.detach()}
 
 @process_trajs
 def get_tb_loss_maxent(
@@ -455,15 +452,15 @@ def get_tb_loss_rand_const(
         jagged_trajs, traj_lens, raw_embeddings, embedding_structure,
         actions, log_z, log_rewards,
         stop_model, node_model, edge_model,
-        mean=0.2, std=0.125, eps=0.01, precision=1_000,
+        mean=0.2, std=0.125, eps=0.01, precision=1_000, seed=1,
         device="cuda"
     ):
 
     action_probs = get_action_probs(*raw_embeddings, *embedding_structure, stop_model, node_model, edge_model, random_action_prob=0, apply_masks=True)
 
     log_p_f = action_probs[list(range(len(action_probs))), actions]
-    log_p_b = torch.tensor([hash(s) % precision for traj in jagged_trajs for s, _a in traj])
-    log_p_b = torch.log(torch.clamp((log_p_b / precision - 0.5) * (std * 2) + mean, min=eps, max=1))
+    unnorm_p_b = torch.tensor([hash((tuple(s), a, seed)) % precision for traj in jagged_trajs for (s, _a), (_s, a) in zip(traj, [traj[-1]] + traj[:-1])])
+    log_p_b = torch.log(torch.clamp((unnorm_p_b / precision - 0.5) * (std * 2) + mean, min=eps, max=1))
     log_p_b = torch.roll(log_p_b, -1, 0)
 
     final_graph_idxs = torch.cumsum(traj_lens, 0) - 1
@@ -491,7 +488,7 @@ def get_tb_loss_rand_const(
         mean_num_nodes += num_nodes / len(jagged_trajs)
 
     return loss, {"log_z": log_z.item(), "mean_log_reward": torch.mean(log_rewards).item(), "connected_prop": connected_prop.item(),
-                  "mean_num_nodes": mean_num_nodes.item()}
+                  "mean_num_nodes": mean_num_nodes.item(), "tb_loss": loss.detach()}
 
 @process_trajs
 def get_tb_loss_rand_var(
@@ -505,7 +502,7 @@ def get_tb_loss_rand_var(
     action_probs = get_action_probs(*raw_embeddings, *embedding_structure, stop_model, node_model, edge_model, random_action_prob=0, apply_masks=True)
 
     log_p_f = action_probs[list(range(len(action_probs))), actions]
-    log_p_b = torch.normal(mean=mean, std=std, size=(raw_embeddings[2].shape[0],))  # could compute traj_log_p_b directly if we don't want to try other distributions
+    log_p_b = torch.normal(mean=mean, std=std, size=(action_probs.shape[0],))  # could compute traj_log_p_b directly if we don't want to try other distributions
     log_p_b = torch.log(torch.clamp(log_p_b, min=eps, max=1))
 
     final_graph_idxs = torch.cumsum(traj_lens, 0) - 1
@@ -533,7 +530,7 @@ def get_tb_loss_rand_var(
         mean_num_nodes += num_nodes / len(jagged_trajs)
 
     return loss, {"log_z": log_z.item(), "mean_log_reward": torch.mean(log_rewards).item(), "connected_prop": connected_prop.item(),
-                  "mean_num_nodes": mean_num_nodes.item()}
+                  "mean_num_nodes": mean_num_nodes.item(), "tb_loss": loss.detach()}
 
 @process_trajs
 def get_tb_loss_const(
@@ -547,7 +544,7 @@ def get_tb_loss_const(
     action_probs = get_action_probs(*raw_embeddings, *embedding_structure, stop_model, node_model, edge_model, random_action_prob=0, apply_masks=True)
 
     log_p_f = action_probs[list(range(len(action_probs))), actions]
-    log_p_b = torch.full((raw_embeddings[2].shape[0],), log(value))
+    log_p_b = torch.full((log_p_f[2].shape[0],), log(value))
 
     final_graph_idxs = torch.cumsum(traj_lens, 0) - 1
 
@@ -574,7 +571,7 @@ def get_tb_loss_const(
         mean_num_nodes += num_nodes / len(jagged_trajs)
 
     return loss, {"log_z": log_z.item(), "mean_log_reward": torch.mean(log_rewards).item(), "connected_prop": connected_prop.item(),
-                  "mean_num_nodes": mean_num_nodes.item()}
+                  "mean_num_nodes": mean_num_nodes.item(), "tb_loss": loss.detach()}
 
 @process_trajs
 def get_tb_loss_aligned(
@@ -617,7 +614,7 @@ def get_tb_loss_aligned(
         mean_num_nodes += num_nodes / len(jagged_trajs)
 
     return loss, {"log_z": log_z.item(), "mean_log_reward": torch.mean(log_rewards).item(), "connected_prop": connected_prop.item(),
-                  "mean_num_nodes": mean_num_nodes.item()}
+                  "mean_num_nodes": mean_num_nodes.item(), "tb_loss": loss.detach()}
 
 @process_trajs
 def get_tb_loss_adjusted_uniform(
@@ -668,4 +665,34 @@ def get_tb_loss_adjusted_uniform(
         mean_num_nodes += num_nodes / len(jagged_trajs)
 
     return loss, {"log_z": log_z.item(), "mean_log_reward": torch.mean(log_rewards).item(), "connected_prop": connected_prop.item(),
-                  "mean_num_nodes": mean_num_nodes.item(), "mean_uniform_prob": mean_uniform_prob, "mean_adjustment": mean_adjustment}
+                  "mean_num_nodes": mean_num_nodes.item(), "mean_uniform_prob": mean_uniform_prob, "mean_adjustment": mean_adjustment,
+                  "tb_loss": loss.detach()}
+
+
+@torch.no_grad()
+def get_action_log_probs_test_helper(nodes, edges, masks, loss_fn, base_model, fwd_models, bck_models, log_z_model, log_z, loss_arg_a, loss_arg_b, loss_arg_c, device="cuda"):
+    # maybe worth implementing this for all losses and adding to configs dictionary
+
+    raw_embeddings, embedding_structure = get_embeddings(base_model, nodes, edges, masks, device=device)
+    log_z = log_z if log_z > 0 else log_z_model(torch.tensor([[1.]], device=device))
+    fwd_action_probs = get_action_probs(*raw_embeddings, *embedding_structure, *fwd_models, random_action_prob=0, apply_masks=True)
+
+    if loss_fn == "tb-uniform-rand":
+        unnorm_p_b = torch.tensor([[hash((s, a, loss_arg_c)) % 1_000 for a in range(s[0].shape[0]**2 + 2)] for s in zip(nodes, edges, masks, strict=True)])
+        bck_action_probs = torch.log(torch.clamp((unnorm_p_b / 1_000 - 0.5) * (loss_arg_b * 2) + loss_arg_a, min=0.01, max=1))
+    elif loss_fn == "tb-uniform-rand-var":
+        log_p_b = torch.normal(mean=loss_arg_a, std=loss_arg_b, size=(nodes.shape[0],))
+        bck_action_probs = torch.log(torch.clamp(log_p_b, min=0.01, max=1))
+    elif loss_fn == "tb-uniform":
+        bck_action_probs = torch.tensor([[-log(get_num_previous_acts(s))] * (s[0].shape[0]**2 + 2) for s in zip(nodes, edges, masks, strict=True)])
+    elif loss_fn == "tb-tlm":
+        bck_action_probs = get_action_probs(*raw_embeddings, *list(range(len(nodes))), masks, edges[:, :, :, 0] == 1,
+                                            *bck_models, random_action_prob=0, apply_masks=False)
+    elif loss_fn == "tb-smoothed-tlm":
+        tlm_log_p_b = get_action_probs(*raw_embeddings, *embedding_structure, *bck_models, random_action_prob=0, apply_masks=False)
+        uniform_log_p_b = torch.tensor([[-log(get_num_previous_acts(s))] * (s[0].shape[0]**2 + 2) for s in zip(nodes, edges, masks, strict=True)])
+        bck_action_probs = (1-loss_arg_a) * tlm_log_p_b + (loss_arg_a) * uniform_log_p_b
+    else:
+        raise ValueError(f"embedding for loss function {loss_fn} is not supported")
+    
+    return fwd_action_probs, bck_action_probs
