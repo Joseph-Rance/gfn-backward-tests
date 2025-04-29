@@ -14,8 +14,8 @@ CYCLE_LEN = 20
 def save_diagram(fwd_embeddings, bck_embeddings, losses, colours):
 
     tsne = manifold.TSNE(n_components=1, random_state=SEED)
-    fwd_vals = np.flatten(tsne.fit_transform(fwd_embeddings))
-    bck_vals = np.flatten(tsne.fit_transform(bck_embeddings))
+    fwd_vals = tsne.fit_transform(fwd_embeddings).flatten()
+    bck_vals = tsne.fit_transform(bck_embeddings).flatten()
 
     fig = plt.figure()
     ax = fig.add_subplot(projection='3d')
@@ -26,9 +26,7 @@ def save_diagram(fwd_embeddings, bck_embeddings, losses, colours):
     ax.set_ylabel("backward policy")
     ax.set_zlabel("loss")
 
-    # TODO: temp
-    #plt.savefig("tsne_plot.png")
-    plt.show()
+    plt.savefig("tsne_plot.png")
 
 
 fwd_embeddings = []
@@ -47,8 +45,9 @@ for seed in range(1, NUM_RANDOM+1):
             fwd_embeddings.append(np.load(f"results/embeddings/fwd_{it}.npy"))
             bck_embeddings.append(np.load(f"results/embeddings/bck_{it}.npy"))
 
-        losses += np.load(f"results/losses.npy").tolist()
-        colours += [0]*len(losses)
+        new_losses = np.load(f"results/losses.npy").tolist()
+        losses += new_losses
+        colours += [0] * len(new_losses)
 
         np.save(f"results/s/fwd_embeddings.npy", np.array(fwd_embeddings))
         np.save(f"results/s/bck_embeddings.npy", np.array(bck_embeddings))
@@ -68,8 +67,9 @@ for seed in range(1, NUM_RANDOM+1):
             fwd_embeddings.append(np.load(f"results/embeddings/fwd_{it}.npy"))
             bck_embeddings.append(np.load(f"results/embeddings/bck_{it}.npy"))
 
-        losses += np.load(f"results/losses.npy").tolist()
-        colours += [0]*len(losses)
+        new_losses = np.load(f"results/losses.npy").tolist()
+        losses += new_losses
+        colours += [0] * len(new_losses)
 
         np.save(f"results/s/fwd_embeddings.npy", np.array(fwd_embeddings))
         np.save(f"results/s/bck_embeddings.npy", np.array(bck_embeddings))
@@ -88,8 +88,9 @@ for seed in range(1, NUM_UNIFORM+1):
         fwd_embeddings.append(np.load(f"results/embeddings/fwd_{it}.npy"))
         bck_embeddings.append(np.load(f"results/embeddings/bck_{it}.npy"))
 
-    losses += np.load(f"results/losses.npy").tolist()
-    colours += [seed] * len(losses)
+    new_losses = np.load(f"results/losses.npy").tolist()
+    losses += new_losses
+    colours += [seed] * len(new_losses)
 
     np.save(f"results/s/fwd_embeddings.npy", np.array(fwd_embeddings))
     np.save(f"results/s/bck_embeddings.npy", np.array(bck_embeddings))
@@ -108,8 +109,9 @@ for seed in range(1, NUM_TLM+1):
         fwd_embeddings.append(np.load(f"results/embeddings/fwd_{it}.npy"))
         bck_embeddings.append(np.load(f"results/embeddings/bck_{it}.npy"))
 
-    losses += np.load(f"results/losses.npy").tolist()
-    colours += [seed+NUM_UNIFORM] * len(losses)
+    new_losses = np.load(f"results/losses.npy").tolist()
+    losses += new_losses
+    colours += [seed+NUM_UNIFORM] * len(new_losses)
 
     np.save(f"results/s/fwd_embeddings.npy", np.array(fwd_embeddings))
     np.save(f"results/s/bck_embeddings.npy", np.array(bck_embeddings))
@@ -128,8 +130,9 @@ for seed in range(1, NUM_TLM+1):
         fwd_embeddings.append(np.load(f"results/embeddings/fwd_{it}.npy"))
         bck_embeddings.append(np.load(f"results/embeddings/bck_{it}.npy"))
 
-    losses += np.load(f"results/losses.npy").tolist()
-    colours += [seed+NUM_TLM+NUM_UNIFORM] * len(losses)
+    new_losses = np.load(f"results/losses.npy").tolist()
+    losses += new_losses
+    colours += [seed+NUM_TLM+NUM_UNIFORM] * len(new_losses)
 
     np.save(f"results/s/fwd_embeddings.npy", np.array(fwd_embeddings))
     np.save(f"results/s/bck_embeddings.npy", np.array(bck_embeddings))
