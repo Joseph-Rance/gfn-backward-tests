@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from sklearn import manifold
 
 SEED = 1
-NUM_RANDOM = 8
+NUM_RANDOM = 16
 MEANS = (0.2, 0.5)
 NUM_UNIFORM = 2
 NUM_TLM = 3
@@ -56,7 +56,7 @@ for seed in range(1, NUM_RANDOM+1):
 
         save_diagram(np.array(fwd_embeddings), np.array(bck_embeddings), np.array(losses), np.array(colours))
 
-for seed in range(1, NUM_RANDOM+1):
+for seed in range(1, 3):
     for mean in MEANS:
 
         _return_code = subprocess.call(

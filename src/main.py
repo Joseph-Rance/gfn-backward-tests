@@ -266,7 +266,7 @@ if __name__ == "__main__":
                 if args.test_template:  # TODO: temp (integrate this in with normal running)
 
                     total_loss = 0
-                    for i in range(16):
+                    for i in range(32):
                         jagged_trajs, log_rewards = next(data_source)
                         loss, metrics = get_loss(
                             jagged_trajs, log_rewards, base_model, log_z_model, *fwd_models, *bck_models, constant_log_z=args.log_z, device=args.device
