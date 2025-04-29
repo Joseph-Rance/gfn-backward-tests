@@ -8,6 +8,7 @@ NUM_RANDOM = 8
 MEANS = (0.2, 0.5)
 NUM_UNIFORM = 2
 NUM_TLM = 3
+CYCLE_LEN = 20
 
 
 def save_diagram(fwd_embeddings, bck_embeddings, losses, colours):
@@ -39,10 +40,10 @@ for seed in range(1, NUM_RANDOM+1):
     for mean in MEANS:
 
         _return_code = subprocess.call(
-            f"PYTHONHASHSEED=0 python src/main.py --loss-fn tb-uniform-rand --loss-arg-a {mean} --loss-arg-b {mean} --loss-arg-c {seed} --seed {seed} --test-template", shell=True
+            f"PYTHONHASHSEED=0 python src/main.py --loss-fn tb-uniform-rand --loss-arg-a {mean} --loss-arg-b {mean} --loss-arg-c {seed} --cycle-len {CYCLE_LEN} --seed {seed} --test-template", shell=True
         )
 
-        for it in range(4, 5004, 5):
+        for it in range(CYCLE_LEN-1, 5000 + CYCLE_LEN - 1, CYCLE_LEN):
             fwd_embeddings.append(np.load(f"results/embeddings/fwd_{it}.npy"))
             bck_embeddings.append(np.load(f"results/embeddings/bck_{it}.npy"))
 
@@ -60,10 +61,10 @@ for seed in range(1, NUM_RANDOM+1):
     for mean in MEANS:
 
         _return_code = subprocess.call(
-            f"PYTHONHASHSEED=0 python src/main.py --loss-fn tb-uniform-rand-var --loss-arg-a {mean} --loss-arg-b {mean} --seed {seed} --test-template", shell=True
+            f"PYTHONHASHSEED=0 python src/main.py --loss-fn tb-uniform-rand-var --loss-arg-a {mean} --loss-arg-b {mean} --cycle-len {CYCLE_LEN} --seed {seed} --test-template", shell=True
         )
 
-        for it in range(4, 5004, 5):
+        for it in range(CYCLE_LEN-1, 5000 + CYCLE_LEN - 1, CYCLE_LEN):
             fwd_embeddings.append(np.load(f"results/embeddings/fwd_{it}.npy"))
             bck_embeddings.append(np.load(f"results/embeddings/bck_{it}.npy"))
 
@@ -80,10 +81,10 @@ for seed in range(1, NUM_RANDOM+1):
 for seed in range(1, NUM_UNIFORM+1):
 
     _return_code = subprocess.call(
-        f"PYTHONHASHSEED=0 python src/main.py --loss-fn tb-uniform --seed {seed} --test-template", shell=True
+        f"PYTHONHASHSEED=0 python src/main.py --loss-fn tb-uniform --cycle-len {CYCLE_LEN} --seed {seed} --test-template", shell=True
     )
 
-    for it in range(4, 5004, 5):
+    for it in range(CYCLE_LEN-1, 5000 + CYCLE_LEN - 1, CYCLE_LEN):
         fwd_embeddings.append(np.load(f"results/embeddings/fwd_{it}.npy"))
         bck_embeddings.append(np.load(f"results/embeddings/bck_{it}.npy"))
 
@@ -100,10 +101,10 @@ for seed in range(1, NUM_UNIFORM+1):
 for seed in range(1, NUM_TLM+1):
 
     _return_code = subprocess.call(
-        f"PYTHONHASHSEED=0 python src/main.py --loss-fn tb-tlm --num-batches 10000 --seed {seed} --test-template", shell=True
+        f"PYTHONHASHSEED=0 python src/main.py --loss-fn tb-tlm --num-batches 10000 --cycle-len {CYCLE_LEN} --seed {seed} --test-template", shell=True
     )
 
-    for it in range(4, 5004, 5):
+    for it in range(CYCLE_LEN-1, 5000 + CYCLE_LEN - 1, CYCLE_LEN):
         fwd_embeddings.append(np.load(f"results/embeddings/fwd_{it}.npy"))
         bck_embeddings.append(np.load(f"results/embeddings/bck_{it}.npy"))
 
@@ -120,10 +121,10 @@ for seed in range(1, NUM_TLM+1):
 for seed in range(1, NUM_TLM+1):
 
     _return_code = subprocess.call(
-        f"PYTHONHASHSEED=0 python src/main.py --loss-fn tb-smoothed-tlm --loss-arg-a 0.5 --seed {seed} --test-template", shell=True
+        f"PYTHONHASHSEED=0 python src/main.py --loss-fn tb-smoothed-tlm --loss-arg-a 0.5 --cycle-len {CYCLE_LEN} --seed {seed} --test-template", shell=True
     )
 
-    for it in range(4, 5004, 5):
+    for it in range(CYCLE_LEN-1, 5000 + CYCLE_LEN - 1, CYCLE_LEN):
         fwd_embeddings.append(np.load(f"results/embeddings/fwd_{it}.npy"))
         bck_embeddings.append(np.load(f"results/embeddings/bck_{it}.npy"))
 
