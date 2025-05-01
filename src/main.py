@@ -238,10 +238,10 @@ if __name__ == "__main__":
                     test_mean_connected_prop += float(num_edges == num_nodes**2)
                     test_node_counts.append(num_nodes.item())
 
-                    if args.save:
-                        np.save(f"results/batches/nodes_{it}_{i}.npy", nodes.to("cpu").numpy())
-                        np.save(f"results/batches/edges_{it}_{i}.npy", edges.to("cpu").numpy())
-                        np.save(f"results/batches/masks_{it}_{i}.npy", edges.to("cpu").numpy())
+                    #if args.save:
+                    #    np.save(f"results/batches/nodes_{it}_{i}.npy", nodes.to("cpu").numpy())
+                    #    np.save(f"results/batches/edges_{it}_{i}.npy", edges.to("cpu").numpy())
+                    #    np.save(f"results/batches/masks_{it}_{i}.npy", edges.to("cpu").numpy())
 
                 test_mean_log_reward /= args.num_test_graphs if args.num_test_graphs != 0 else 1
                 test_mean_connected_prop /= args.num_test_graphs if args.num_test_graphs != 0 else 1
@@ -274,6 +274,9 @@ if __name__ == "__main__":
                             jagged_trajs, log_rewards, base_model, log_z_model, *fwd_models, *bck_models, constant_log_z=args.log_z, device=args.device
                         )
                         total_loss += metrics["tb_loss"]
+
+                        if i < 4:
+                            np.save(f"results/batches/trajs_{it}_{i}.npy", np.array(jagged_trajs, dtype=object), allow_pickle=True)
 
                     losses.append(total_loss.item())
                     np.save(f"results/losses.npy", np.array(losses))
