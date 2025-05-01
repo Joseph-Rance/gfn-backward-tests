@@ -5,7 +5,7 @@ from sklearn import manifold
 
 SEED = 1
 NUM_RANDOM = 8
-MEANS = (0.2, 0.5)
+MEANS = (0.15, 0.3)
 NUM_UNIFORM = 2
 NUM_TLM = 3
 CYCLE_LEN = 20
