@@ -224,7 +224,7 @@ if __name__ == "__main__":
 
             # TODO: temp
             #if (it+1)%args.cycle_len == 0:
-            if it in [500, 1_000, 2_000, 5_000, 10_000]:
+            if it in [0, 500, 1_000, 2_000, 5_000, 10_000]:
 
                 test_mean_log_reward = test_mean_connected_prop = 0
                 test_node_counts = []
