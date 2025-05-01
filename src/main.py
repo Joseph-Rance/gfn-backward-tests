@@ -275,7 +275,7 @@ if __name__ == "__main__":
                         )
                         total_loss += metrics["tb_loss"]
 
-                        if i < 4:
+                        if i < 8:
                             np.save(f"results/batches/trajs_{it}_{i}.npy", np.array(jagged_trajs, dtype=object), allow_pickle=True)
 
                     losses.append(total_loss.item())
