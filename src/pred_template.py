@@ -9,7 +9,7 @@ from graph_transformer_pytorch import GraphTransformer
 from data_source import GFNSampler, get_reward_fn_generator, get_smoothed_log_reward
 
 SEED = 1
-NUM_BATCHES = 128
+NUM_BATCHES = 8
 BATCH_SIZE = 32
 BATCH_ARRGEGATION = 4
 OUT_PATH = "results/s/template.npy"
