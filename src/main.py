@@ -222,7 +222,9 @@ if __name__ == "__main__":
             for m in (base_model, log_z_model, *fwd_models, *bck_models):
                 m.eval()
 
-            if (it+1)%args.cycle_len == 0:
+            # TODO: temp
+            #if (it+1)%args.cycle_len == 0:
+            if it in [500, 1_000, 2_000, 5_000, 10_000]:
 
                 test_mean_log_reward = test_mean_connected_prop = 0
                 test_node_counts = []
@@ -296,5 +298,23 @@ if __name__ == "__main__":
                     for m, f in zip([base_model, *fwd_models, *bck_models, log_z_model],
                                     ["base_model", *("fwd_" + n for n in names), *("bck_" + n for n in names), "log_z_model"]):
                         torch.save(m.state_dict(), f"results/models/{f}_{it}.pt")
+
+                    np.save(f"results/metrics/{it}", np.array([
+                        it,
+                        sum_loss.item(),
+                        *([
+                            sum_loss_fwd.item(),
+                            sum_loss_bck.item()
+                        ] if parameterise_backward else []),
+                        norm,
+                        metrics["log_z"],
+                        test_mean_log_reward,
+                        mean_log_reward,
+                        test_mean_connected_prop,
+                        mean_connected_prop,
+                        mean_num_nodes,
+                        len(graphs),
+                        *[test_node_count_distribution[i] for i in range(1, 9)]
+                    ]))
 
     print("done.")
