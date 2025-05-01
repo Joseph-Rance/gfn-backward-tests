@@ -68,6 +68,13 @@ def get_prob_change(nodes, edges, _mask, action_idx, pred_prob, b=0.8):  # add o
 
         return 0  # ok to add an edge so long as there are options
 
+def get_state_hash(v):  # v is (state, action, seed)
+    obj = (tuple(tuple(s.reshape(-1).tolist()) for s in v[0]), *v[1:])
+    #hashGen = hashlib.md5()
+    #hashGen.update((abs(hash(obj))).to_bytes(10, 'little'))
+    #return int(hashGen.hexdigest(), 16)
+    return hash(obj)
+
 def huber(x, beta=1, i_delta=4):
     ax = torch.abs(x)
     return torch.where(ax <= beta, 0.5 * x * x, beta * (ax - beta / 2)) * i_delta

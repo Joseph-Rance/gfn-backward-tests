@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_scatter import scatter
 
-from util import get_num_previous_acts, adjust_action_idxs, is_n_connected, get_aligned_action_log_prob, get_prob_change, huber
+from util import get_num_previous_acts, adjust_action_idxs, is_n_connected, get_aligned_action_log_prob, get_prob_change, get_state_hash, huber
 
 
 def get_embeddings(base_model, nodes, edges, masks, device="cuda"):
@@ -459,7 +459,7 @@ def get_tb_loss_rand_const(
     action_probs = get_action_probs(*raw_embeddings, *embedding_structure, stop_model, node_model, edge_model, random_action_prob=0, apply_masks=True)
 
     log_p_f = action_probs[list(range(len(action_probs))), actions]
-    unnorm_p_b = torch.tensor([hash((tuple(s), a, seed)) % precision for traj in jagged_trajs for (s, _a), (_s, a) in zip(traj, [traj[-1]] + traj[:-1])])
+    unnorm_p_b = torch.tensor([get_state_hash((tuple(s), a, seed)) % precision for traj in jagged_trajs for (s, _a), (_s, a) in zip(traj, [traj[-1]] + traj[:-1])])
     log_p_b = torch.log(torch.clamp((unnorm_p_b / precision - 0.5) * (std * 2) + mean, min=eps, max=1))
     log_p_b = torch.roll(log_p_b, -1, 0)
 
@@ -678,7 +678,7 @@ def get_action_log_probs_test_helper(nodes, edges, masks, loss_fn, base_model, f
     fwd_action_probs = get_action_probs(*raw_embeddings, *embedding_structure, *fwd_models, random_action_prob=0, apply_masks=True)
 
     if loss_fn == "tb-uniform-rand":
-        unnorm_p_b = torch.tensor([[hash((s, a, loss_arg_c)) % 1_000 for a in range(s[0].shape[0]**2 + 2)] for s in zip(nodes, edges, masks, strict=True)])
+        unnorm_p_b = torch.tensor([[get_state_hash((s, a, loss_arg_c)) % 1_000 for a in range(s[0].shape[0]**2 + 2)] for s in zip(nodes, edges, masks, strict=True)])
         bck_action_probs = torch.log(torch.clamp((unnorm_p_b / 1_000 - 0.5) * (loss_arg_b * 2) + loss_arg_a, min=0.01, max=1))
     elif loss_fn == "tb-uniform-rand-var":
         log_p_b = torch.normal(mean=loss_arg_a, std=loss_arg_b, size=(nodes.shape[0],))
