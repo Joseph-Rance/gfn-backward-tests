@@ -45,7 +45,7 @@ parser.add_argument("-y", "--depth", type=int, default=1, help="depth of the tra
 parser.add_argument("-g", "--max-nodes", type=int, default=8, help="maximum number of nodes in a generated graph")
 parser.add_argument("-k", "--max-len", type=int, default=80, help="maximum number of actions per trajectory")
 parser.add_argument("-q", "--random-action-template", type=int, default=2, help="index of the random action config to use (see code)")
-parser.add_argument("-z", "--log-z", type=int, default=0, help="constant value of log(z) to use (learnt if None)")
+parser.add_argument("-z", "--log-z", type=float, default=0, help="constant value of log(z) to use (learnt if None)")
 
 # training
 parser.add_argument("-l", "--loss-fn", type=str, default="tb-uniform", help="loss function for training (e.g. TB + uniform backward policy)")
@@ -143,7 +143,8 @@ else:
 
 if args.loss_fn == "tb-max-ent":
     assert parameterise_backward
-    bck_models.append(compile(nn.Sequential(nn.Linear(args.num_features, args.num_features*2), nn.LeakyReLU(), nn.Linear(args.num_features*2, 1))).to(args.device))
+    n_model = compile(nn.Sequential(nn.Linear(args.num_features, args.num_features*2), nn.LeakyReLU(), nn.Linear(args.num_features*2, 1))).to(args.device)
+    bck_models.append(n_model)
 
 log_z_model = compile(nn.Linear(1, 1, bias=False)).to(args.device)
 
@@ -215,7 +216,10 @@ if __name__ == "__main__":
 
         if parameterise_backward:
             sum_loss_fwd += metrics["tb_loss"] / args.cycle_len
-            sum_loss_bck += metrics["back_loss"] / args.cycle_len
+            if args.loss_fn not in ["tb-free", "tb-max-ent"]:  # TODO!
+                sum_loss_bck += metrics["back_loss"] / args.cycle_len
+            else:
+                sum_loss_bck += torch.tensor(0)
 
         with torch.no_grad():
 
@@ -224,7 +228,7 @@ if __name__ == "__main__":
 
             # TODO: temp
             #if (it+1)%args.cycle_len == 0:
-            if it in [0, 500, 1_000, 2_000, 5_000, 10_000]:
+            if it+1 in [1, 500, 1_000, 2_000, 5_000, 10_000]:
 
                 test_mean_log_reward = test_mean_connected_prop = 0
                 test_node_counts = []
@@ -268,7 +272,7 @@ if __name__ == "__main__":
                 if args.test_template:  # TODO: temp (integrate this in with normal running)
 
                     total_loss = 0
-                    for i in range(32):
+                    for i in range(8):  # TODO: set to 32 for 3d plot sweep
                         jagged_trajs, log_rewards = next(data_source)
                         loss, metrics = get_loss(
                             jagged_trajs, log_rewards, base_model, log_z_model, *fwd_models, *bck_models, constant_log_z=args.log_z, device=args.device
@@ -287,12 +291,8 @@ if __name__ == "__main__":
                                                                                               args.log_z, args.loss_arg_a, args.loss_arg_b, args.loss_arg_c,
                                                                                               device=args.device)
                         np.save(f"results/embeddings/fwd_{it}.npy", torch.flatten(fwd_action_probs).to("cpu").numpy())
-                        np.save(f"results/embeddings/bck_{it}.npy", torch.flatten(bck_action_probs).to("cpu").numpy())
-
-                sum_loss = mean_log_z = mean_log_reward = mean_connected_prop = mean_num_nodes = 0
-
-                if parameterise_backward:  # needs updating to adapt to all possible configs
-                    sum_loss_fwd = sum_loss_bck = 0
+                        if bck_action_probs:
+                            np.save(f"results/embeddings/bck_{it}.npy", torch.flatten(bck_action_probs).to("cpu").numpy())
 
                 data_source.random_action_prob = max(random_prob_min, data_source.random_action_prob * random_prob_decay)
 
@@ -319,5 +319,10 @@ if __name__ == "__main__":
                         len(graphs),
                         *[test_node_count_distribution[i] for i in range(1, 9)]
                     ]))
+
+                sum_loss = mean_log_z = mean_log_reward = mean_connected_prop = mean_num_nodes = 0
+
+                if parameterise_backward:  # needs updating to adapt to all possible configs
+                    sum_loss_fwd = sum_loss_bck = 0
 
     print("done.")

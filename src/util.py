@@ -43,17 +43,18 @@ def get_aligned_action_log_prob(nodes, edges, _mask, action_idx, b=0.8, correct_
 
 def get_prob_change(nodes, edges, _mask, action_idx, pred_prob, b=0.8):  # add output pred_prob
 
+    capacity = nodes.shape[0]
     num_nodes = torch.sum(torch.sum(nodes, dim=1) > 0, dim=0)
     num_edges = torch.sum(edges[:, :, 0], dim=(0, 1))
 
-    if action_idx == num_nodes ** 2 + 1:  # stop
+    if action_idx == capacity ** 2 + 1:  # stop
 
         if num_edges == num_nodes**2:
             return (1-b) - pred_prob
 
         return -pred_prob  # 0 flow to stopping on incomplete graphs
 
-    elif action_idx == num_nodes ** 2:  # node
+    elif action_idx == capacity ** 2:  # node
 
         if num_edges == num_nodes**2:
             return b - pred_prob
@@ -61,7 +62,7 @@ def get_prob_change(nodes, edges, _mask, action_idx, pred_prob, b=0.8):  # add o
         return min(0, b - pred_prob)  # don't assign more than b flow to bigger graphs
     else:
 
-        assert action_idx < num_nodes ** 2
+        assert action_idx < capacity ** 2
 
         if num_edges == num_nodes**2:
             return -pred_prob
