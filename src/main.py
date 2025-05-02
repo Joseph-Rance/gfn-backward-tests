@@ -291,7 +291,7 @@ if __name__ == "__main__":
                                                                                               args.log_z, args.loss_arg_a, args.loss_arg_b, args.loss_arg_c,
                                                                                               device=args.device)
                         np.save(f"results/embeddings/fwd_{it}.npy", torch.flatten(fwd_action_probs).to("cpu").numpy())
-                        if bck_action_probs:
+                        if bck_action_probs is not None:
                             np.save(f"results/embeddings/bck_{it}.npy", torch.flatten(bck_action_probs).to("cpu").numpy())
 
                 data_source.random_action_prob = max(random_prob_min, data_source.random_action_prob * random_prob_decay)
