@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 from graph_transformer_pytorch import GraphTransformer
 
-from data_source import GFNSampler, get_reward_fn_generator, get_smoothed_log_reward, get_uncertain_smoothed_log_reward, get_counting_log_reward
+from data_source import GFNSampler, get_reward_fn_generator, get_smoothed_log_reward, get_uncertain_smoothed_log_reward, get_uniform_counting_log_reward
 from gfn import (
     get_tb_loss_uniform,
     get_tb_loss_adjusted_uniform,
@@ -120,7 +120,7 @@ configs = {
 get_loss, config = configs[args.loss_fn]
 parameterise_backward = config["parameterise_backward"]
 
-reward_fns = [get_smoothed_log_reward, get_uncertain_smoothed_log_reward, get_counting_log_reward]
+reward_fns = [get_smoothed_log_reward, get_uncertain_smoothed_log_reward, get_uniform_counting_log_reward]
 reward_fn = reward_fns[args.reward_idx]
 
 #compile = lambxa x: torch.compile(x)
@@ -255,6 +255,14 @@ if __name__ == "__main__":
                 ens_0 = data_source.get_log_unnormalised_ens()
                 ens_1 = data_source.get_log_unnormalised_ens(refl=True)
 
+                # TODO: temp
+                dist_a = [test_node_count_distribution[i] / 64 for i in range(1, 9)]
+                dist_b = [1/i for i in range(1, 9)]
+                dist_m = [(dist_a[i] + dist_b[i]) / 2 for i in range(8)]
+
+                kl_b_a = sum(dist_b[i] * (log(dist_b[i]) - log(dist_a[i])) for i in range(8))  # assumes generated distributionhas uniform probability for graphs with k nodes
+                js = sum(dist_a[i] * (log(dist_a[i]) - log(dist_m[i])) + dist_b[i] * (log(dist_b[i]) - log(dist_m[i])) for i in range(8))
+
                 # 0.8 should have 1: 13, 2: 10, 3: 08, 4: 07, 5: 05, 6: 04, 7: 03, 8: 03
                 print(
                     f"{it: <5} loss: {sum_loss.item():7.2f}" \
@@ -265,7 +273,8 @@ if __name__ == "__main__":
                     f"connected: {test_mean_connected_prop:4.2f} ({mean_connected_prop:4.2f}); " \
                     f"ens_0: [{', '.join([f'{i.item():6.2f}' for i in ens_0])}]; " \
                     f"ens_1: [{', '.join([f'{i.item():6.2f}' for i in ens_1[1:]])}]; " \
-                    f"({mean_num_nodes:3.1f}; {len(graphs)}), {', '.join([f'{i}: {test_node_count_distribution[i]:0>2}' for i in range(1, 9)])}"
+                    f"({mean_num_nodes:3.1f}; {len(graphs)}), {', '.join([f'{i}: {test_node_count_distribution[i]:0>2}' for i in range(1, 9)])}; " \
+                    f"kl: {kl_a_b:8.5f}; js: {js:8.5f}"
                 )
 
 

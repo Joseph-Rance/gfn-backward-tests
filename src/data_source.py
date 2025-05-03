@@ -7,14 +7,14 @@ from torch.utils.data import IterableDataset
 from gfn import get_embeddings, get_action_probs
 
 
-def get_smoothed_log_reward(nodes, edges, base=0.8, alpha=10):
+def get_smoothed_log_reward(nodes, edges, base=0.8, alpha=10, **kwargs):
     num_nodes = torch.sum(torch.sum(nodes, dim=2) > 0, dim=1)
     num_edges = torch.sum(edges[:, :, :, 0], dim=(1, 2))
     #return torch.logical_and(num_nodes == 2, num_edges == 0).long()  # (for testing)
     fully_connectedness = (num_edges - num_nodes**2) ** 2
     return torch.clamp(log(base) * num_nodes - alpha * fully_connectedness, min=-1_000)
 
-def get_uncertain_smoothed_log_reward(nodes, edges, base=0.8, alpha=10, base_std=0.1, added_std_nodes=[0, 2, 4, 6, 8, 10], added_std=0.1, eta=0.001):
+def get_uncertain_smoothed_log_reward(nodes, edges, base=0.8, alpha=10, base_std=0.1, added_std_nodes=[0, 2, 4, 6, 8, 10], added_std=0.1, eta=0.001, **kwargs):
     num_nodes = torch.sum(torch.sum(nodes, dim=2) > 0, dim=1)
     num_edges = torch.sum(edges[:, :, :, 0], dim=(1, 2))
     #return torch.logical_and(num_nodes == 2, num_edges == 0).long()  # (for testing)
@@ -23,9 +23,9 @@ def get_uncertain_smoothed_log_reward(nodes, edges, base=0.8, alpha=10, base_std
     noise = torch.normal(mean=0, std=noise_std, size=(num_nodes.shape,))
     return torch.clamp(log(max(base ** num_nodes + noise, eta)) - alpha * fully_connectedness, min=-1_000)
 
-def get_counting_log_reward(nodes, _edges):
+def get_uniform_counting_log_reward(nodes, _edges, **kwargs):  # this is like counting from that other paper but reversed for efficiency
     num_nodes = torch.sum(torch.sum(nodes, dim=2) > 0, dim=1)
-    return torch.clamp(num_nodes * 2.5 - 10, max=1_000, min=-1_000)
+    return torch.clamp(- log(2) * num_nodes ** 2, max=1_000, min=-1_000)
 
 def get_reward_fn_generator(reward_fn, base=0.8, alpha_start=1_000_000, alpha_change=1):
     alpha = alpha_start
