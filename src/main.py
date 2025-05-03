@@ -37,7 +37,7 @@ parser.add_argument("-t", "--num-test-graphs", type=int, default=64, help="numbe
 
 # env
 parser.add_argument("-b", "--base", type=float, default=0.8, help="base for exponent used in reward calculation")
-parser.add_argument("-r", "--reward_idx", type=int, default=0, help="index of reward function to use")
+parser.add_argument("-r", "--reward-idx", type=int, default=0, help="index of reward function to use")
 
 # model
 parser.add_argument("-f", "--num-features", type=int, default=10, help="number of features used to represent each node/edge (min 2)")
