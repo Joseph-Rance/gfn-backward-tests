@@ -23,6 +23,10 @@ def get_uncertain_smoothed_log_reward(nodes, edges, base=0.8, alpha=10, base_std
     noise = torch.normal(mean=0, std=noise_std, size=(num_nodes.shape,))
     return torch.clamp(log(max(base ** num_nodes + noise, eta)) - alpha * fully_connectedness, min=-1_000)
 
+def get_counting_log_reward(nodes, _edges):
+    num_nodes = torch.sum(torch.sum(nodes, dim=2) > 0, dim=1)
+    return torch.clamp(num_nodes * 2.5 - 10, max=1_000, min=-1_000)
+
 def get_reward_fn_generator(reward_fn, base=0.8, alpha_start=1_000_000, alpha_change=1):
     alpha = alpha_start
     while True:
