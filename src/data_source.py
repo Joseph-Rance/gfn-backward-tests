@@ -245,21 +245,6 @@ class GFNSampler(IterableDataset):
 
         return (nodes, edges, masks), done
 
-    def get_precomputed(self):
-
-        trajs = []
-
-        num_nodes = torch.randint(1, self.max_precomputed_len + 1, (self.num_precomputed,), device="cpu")
-
-        for n in num_nodes:
-            trajs.append(self.get_all_precomputed()[int(n)-1])
-
-        log_rewards = log(self.base) * num_nodes
-
-        #log_rewards = torch.tensor([0] * len(num_nodes))  # (for testing)
-
-        return trajs, log_rewards
-
     def get_precomputed(self, importance_sample=True, base_multiplier=1.15):
 
         trajs = []

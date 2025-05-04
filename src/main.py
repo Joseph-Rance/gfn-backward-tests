@@ -223,6 +223,9 @@ if __name__ == "__main__":
 
         with torch.no_grad():
 
+            if (it+1) % 5 == 0:
+                data_source.random_action_prob = max(random_prob_min, data_source.random_action_prob * random_prob_decay)
+
             for m in (base_model, log_z_model, *fwd_models, *bck_models):
                 m.eval()
 
@@ -230,8 +233,8 @@ if __name__ == "__main__":
             #if (it+1)%args.cycle_len == 0:
             if it+1 in [1, 500, 1_000, 2_000, 5_000, 10_000]:
 
-                test_mean_log_reward = test_mean_connected_prop = 0
-                test_node_counts = []
+                test_mean_log_reward = 0
+                test_node_counts, test_connectivities = [], []
 
                 graphs = data_source.generate_graphs(args.num_test_graphs)
                 for i, (nodes, edges, masks) in enumerate(graphs):
@@ -239,7 +242,7 @@ if __name__ == "__main__":
                     num_edges = torch.sum(edges[:, :, 0], dim=(0, 1))
 
                     test_mean_log_reward += reward_fn(nodes.reshape((1, *nodes.shape)), edges.reshape((1, *edges.shape)), alpha=1_000_000).item()
-                    test_mean_connected_prop += float(num_edges == num_nodes**2)
+                    test_connectivities.append(int(num_edges == num_nodes**2))
                     test_node_counts.append(num_nodes.item())
 
                     #if args.save:
@@ -248,22 +251,37 @@ if __name__ == "__main__":
                     #    np.save(f"results/batches/masks_{it}_{i}.npy", edges.to("cpu").numpy())
 
                 test_mean_log_reward /= args.num_test_graphs if args.num_test_graphs != 0 else 1
-                test_mean_connected_prop /= args.num_test_graphs if args.num_test_graphs != 0 else 1
+                test_mean_connected_prop = sum(test_connectivities) / max(len(test_connectivities), 1)
 
                 test_node_count_distribution = collections.Counter(test_node_counts)
 
                 ens_0 = data_source.get_log_unnormalised_ens()
                 ens_1 = data_source.get_log_unnormalised_ens(refl=True)
 
-                # TODO: temp
-                dist_a = [test_node_count_distribution[i] / 64 for i in range(1, 9)]
-                dist_b = [1/i for i in range(1, 9)]
-                dist_m = [(dist_a[i] + dist_b[i]) / 2 for i in range(8)]
 
-                kl_b_a = sum(dist_b[i] * (log(dist_b[i]) - log(dist_a[i])) for i in range(8))  # assumes generated distributionhas uniform probability for graphs with k nodes
-                js = sum(dist_a[i] * (log(dist_a[i]) - log(dist_m[i])) + dist_b[i] * (log(dist_b[i]) - log(dist_m[i])) for i in range(8))
+                # assume that samples are uniformly generated in these buckets (questionalble)
+                # does this make it a lower bound?
+                gen_distribution = np.array([0 for n in range(1, 9) for c in ["d", "c"]])
+                for n, c in zip(test_node_counts, test_connectivities):
+                    gen_distribution[2*test_node_counts + test_connectivities] += 1
+                gen_distribution /= len(test_connectivities)
 
-                # 0.8 should have 1: 13, 2: 10, 3: 08, 4: 07, 5: 05, 6: 04, 7: 03, 8: 03
+                if args.reward_idx == 2:
+                    tru_distribution = np.array([v for n in range(1, 9) for v in [(1 - 2 ** (- n ** 2)) / 8, (2 ** (- n ** 2)) / 8]])
+                else:
+                    s = args.base*(1-args.base**8)/(1-args.base)
+                    tru_distribution = np.array([v for n in range(1, 9) for v in [0, (args.base ** n)/s]])
+
+                eta = 0.001
+                # https://en.wikipedia.org/wiki/Kolmogorov%E2%80%93Smirnov_test
+                ks = np.maximum(np.abs(np.cumsum(gen_distribution) - np.cumsum(tru_distribution)))
+                # https://en.wikipedia.org/wiki/Kullback%E2%80%93Leibler_divergence (KL(true || gen))
+                kl = np.sum(tru_distribution * np.log(tru_distribution / gen_distribution))
+                # https://en.wikipedia.org/wiki/Jensen%E2%80%93Shannon_divergence (questionable usefulness here?)
+                m_distribution = (tru_distribution + gen_distribution) / 2
+                js = (np.sum(tru_distribution * np.log(tru_distribution / m_distribution)) \
+                    + np.sum(gen_distribution * np.log(gen_distribution / m_distribution))) / 2
+
                 print(
                     f"{it: <5} loss: {sum_loss.item():7.2f}" \
                       + (f" (fwd: {sum_loss_fwd.item():7.2f}, bck: {sum_loss_bck.item():7.2f})" if parameterise_backward else "") + \
@@ -274,9 +292,8 @@ if __name__ == "__main__":
                     f"ens_0: [{', '.join([f'{i.item():6.2f}' for i in ens_0])}]; " \
                     f"ens_1: [{', '.join([f'{i.item():6.2f}' for i in ens_1[1:]])}]; " \
                     f"({mean_num_nodes:3.1f}; {len(graphs)}), {', '.join([f'{i}: {test_node_count_distribution[i]:0>2}' for i in range(1, 9)])}; " \
-                    f"kl: {kl_a_b:8.5f}; js: {js:8.5f}"
+                    f"ks: {ks:8.5f}; kl: {kl:8.5f}; js: {js:8.5f}"  # TODO: what the hell
                 )
-
 
                 if args.test_template:  # TODO: temp (integrate this in with normal running)
 
@@ -303,8 +320,6 @@ if __name__ == "__main__":
                         if bck_action_probs is not None:
                             np.save(f"results/embeddings/bck_{it}.npy", torch.flatten(bck_action_probs).to("cpu").numpy())
 
-                data_source.random_action_prob = max(random_prob_min, data_source.random_action_prob * random_prob_decay)
-
                 if args.save:
                     names = ("stop_model", "node_model", "edge_model")
                     for m, f in zip([base_model, *fwd_models, *bck_models, log_z_model],
@@ -326,7 +341,8 @@ if __name__ == "__main__":
                         mean_connected_prop,
                         mean_num_nodes,
                         len(graphs),
-                        *[test_node_count_distribution[i] for i in range(1, 9)]
+                        *[test_node_count_distribution[i] for i in range(1, 9)],
+                        ks, kl, js
                     ]))
 
                 sum_loss = mean_log_z = mean_log_reward = mean_connected_prop = mean_num_nodes = 0

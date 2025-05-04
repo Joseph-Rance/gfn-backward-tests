@@ -20,7 +20,7 @@ def adjust_action_idxs(action_idxs, pre_padding_lens, post_padding_len):
     return action_idxs
 
 @torch.no_grad()
-def is_n_connected(nodes, edges, mask, ns=[3]):
+def is_n_connected(nodes, edges, _mask, ns=[3]):
     num_nodes = torch.sum(torch.sum(nodes, dim=1) > 0, dim=1)
     num_edges = torch.sum(edges[:, :, 0], dim=(1, 2))
     return num_nodes in ns and num_edges == num_nodes**2
