@@ -295,9 +295,9 @@ if __name__ == "__main__":
 
                 # assume that samples are uniformly generated in these buckets (questionalble)
                 # does this make it a lower bound?
-                gen_distribution = np.array([0 for n in range(1, 9) for c in ["d", "c"]], dtype=float)
+                gen_distribution = np.array([0 for __ in range(1, 9) for c in ["d", "c"]], dtype=float)
                 for n, c in zip(test_node_counts, test_connectivities):
-                    gen_distribution[2*test_node_counts + test_connectivities] += 1
+                    gen_distribution[2*(n-1) + c] += 1
                 gen_distribution /= len(test_connectivities)
 
                 if args.reward_idx == 2:
