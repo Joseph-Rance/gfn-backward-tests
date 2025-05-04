@@ -295,7 +295,7 @@ if __name__ == "__main__":
 
                 # assume that samples are uniformly generated in these buckets (questionalble)
                 # does this make it a lower bound?
-                gen_distribution = np.array([0 for n in range(1, 9) for c in ["d", "c"]])
+                gen_distribution = np.array([0 for n in range(1, 9) for c in ["d", "c"]], dtype=float)
                 for n, c in zip(test_node_counts, test_connectivities):
                     gen_distribution[2*test_node_counts + test_connectivities] += 1
                 gen_distribution /= len(test_connectivities)
@@ -308,13 +308,13 @@ if __name__ == "__main__":
 
                 eta = 0.001
                 # https://en.wikipedia.org/wiki/Kolmogorov%E2%80%93Smirnov_test
-                ks = np.maximum(np.abs(np.cumsum(gen_distribution) - np.cumsum(tru_distribution)))
+                ks = np.max(np.abs(np.cumsum(gen_distribution) - np.cumsum(tru_distribution)))
                 # https://en.wikipedia.org/wiki/Kullback%E2%80%93Leibler_divergence (KL(true || gen))
-                kl = np.sum(tru_distribution * np.log(tru_distribution / gen_distribution))
+                kl = np.sum(np.maximum(eta, tru_distribution) * np.log(np.maximum(eta, tru_distribution) / np.maximum(eta, gen_distribution)))
                 # https://en.wikipedia.org/wiki/Jensen%E2%80%93Shannon_divergence (questionable usefulness here?)
                 m_distribution = (tru_distribution + gen_distribution) / 2
-                js = (np.sum(tru_distribution * np.log(tru_distribution / m_distribution)) \
-                    + np.sum(gen_distribution * np.log(gen_distribution / m_distribution))) / 2
+                js = (np.sum(np.maximum(eta, tru_distribution) * np.log(np.maximum(eta, tru_distribution) / np.maximum(eta, m_distribution))) \
+                    + np.sum(np.maximum(eta, gen_distribution) * np.log(np.maximum(eta, gen_distribution) / np.maximum(eta, m_distribution)))) / 2
 
                 print(
                     f"{it: <5} loss: {sum_loss.item():7.2f}" \
