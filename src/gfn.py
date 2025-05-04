@@ -32,7 +32,7 @@ def get_embeddings(base_model, nodes, edges, masks, device="cuda"):
 
     return (node_embeddings, edge_embeddings, mean_embedding), (inverse_indices, unique_masks, unique_edges[:, :, :, 0] == 1)
 
-def get_action_probs(
+def get_action_probs(  # TODO: surely this should be on GPU!
         node_embeddings, edge_embeddings, global_embedding,
         inverse_indices, unique_masks, unique_edges,
         stop_model, node_model, edge_model,
@@ -118,11 +118,38 @@ def process_trajs(get_loss_fn):
         actions = adjust_action_idxs(torch.tensor([a for _s, a in trajs]), pre_padding_lens, post_padding_len)
 
         embeddings = get_embeddings(base_model, nodes, edges, masks, device=device)
-        log_z = constant_log_z if constant_log_z > 0 else log_z_model(torch.tensor([[1.]], device=device))
+        log_z = constant_log_z if constant_log_z != 0 else log_z_model(torch.tensor([[1.]], device=device))
 
         return get_loss_fn(jagged_trajs, traj_lens, *embeddings, actions, log_z, log_rewards, *model_heads, device=device, **kwargs)
 
     return get_loss_fn_from_trajs
+
+@process_trajs
+def get_loss_to_uniform_backward(
+        jagged_trajs, traj_lens, raw_embeddings, embedding_structure,
+        actions, _log_z, _log_rewards,
+        _stop_model, _node_model, _edge_model,
+        bck_stop_model, bck_node_model, bck_edge_model,
+        device="cuda"
+    ):
+
+    trajs = [action for traj in jagged_trajs for action in traj]
+    uniform_p_b = torch.tensor([log(get_num_previous_acts(s)) for s, _a in trajs], device=device)
+
+    bck_action_probs = get_action_probs(*raw_embeddings, *embedding_structure, bck_stop_model, bck_node_model, bck_edge_model, random_action_prob=0, apply_masks=True)
+    log_p_b = bck_action_probs[list(range(len(bck_action_probs))), torch.roll(actions, 1, 0)].to(device)  # prob of previous action
+
+
+    first_graph_idxs = torch.cumsum(traj_lens, 0)
+
+    # don't count padding states (kind of wasteful to compute these)
+    uniform_p_b[first_graph_idxs] = 0
+    log_p_b[first_graph_idxs] = 0
+
+    diffs = uniform_p_b - log_p_b
+    loss = (diffs * diffs).mean()
+
+    return loss
 
 @process_trajs
 def get_tb_loss_uniform(

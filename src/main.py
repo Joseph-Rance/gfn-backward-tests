@@ -9,6 +9,7 @@ from graph_transformer_pytorch import GraphTransformer
 
 from data_source import GFNSampler, get_reward_fn_generator, get_smoothed_log_reward, get_uncertain_smoothed_log_reward, get_uniform_counting_log_reward
 from gfn import (
+    get_loss_to_uniform_backward,
     get_tb_loss_uniform,
     get_tb_loss_adjusted_uniform,
     get_tb_loss_add_node_mult,
@@ -46,6 +47,7 @@ parser.add_argument("-g", "--max-nodes", type=int, default=8, help="maximum numb
 parser.add_argument("-k", "--max-len", type=int, default=80, help="maximum number of actions per trajectory")
 parser.add_argument("-q", "--random-action-template", type=int, default=2, help="index of the random action config to use (see code)")
 parser.add_argument("-z", "--log-z", type=float, default=0, help="constant value of log(z) to use (learnt if None)")
+parser.add_argument("-i", "--backward_init", type=str, default="random", help="how to initialise the backward policy")
 
 # training
 parser.add_argument("-l", "--loss-fn", type=str, default="tb-uniform", help="loss function for training (e.g. TB + uniform backward policy)")
@@ -54,7 +56,7 @@ parser.add_argument("-u", "--loss-arg-b", type=float, default=1)
 parser.add_argument("-w", "--loss-arg-c", type=float, default=1)
 parser.add_argument("-m", "--batch-size", type=int, default=32)
 parser.add_argument("-p", "--num-precomputed", type=int, default=16, help="number of trajectories from precomputed, fully connected graphs")
-parser.add_argument("-i", "--edges-first", action="store_true", default=False, help="whether to add edges before nodes in precomputed trajectories")
+parser.add_argument("-j", "--edges-first", action="store_true", default=False, help="whether to add edges before nodes in precomputed trajectories")
 parser.add_argument("-a", "--learning-rate", type=float, default=0.00001)
 parser.add_argument("-n", "--max-update-norm", type=float, default=99.9)
 parser.add_argument("-e", "--num-batches", type=int, default=5_000)
@@ -138,6 +140,32 @@ if parameterise_backward:
     bck_node_model = compile(nn.Sequential(nn.Linear(args.num_features, args.num_features*2), nn.LeakyReLU(), nn.Linear(args.num_features*2, 1))).to(args.device)
     bck_edge_model = compile(nn.Sequential(nn.Linear(args.num_features*3, args.num_features*3*2), nn.LeakyReLU(), nn.Linear(args.num_features*3*2, 1))).to(args.device)
     bck_models = [bck_stop_model, bck_node_model, bck_edge_model]
+
+    if args.backward_init == "uniform":
+
+        bck_init_optimiser = torch.optim.Adam(itertools.chain(*(i.parameters() for i in bck_models)), lr=args.learning_rate*10, weight_decay=1e-4)
+        main_init_optimiser = torch.optim.Adam(base_model.parameters(), lr=args.learning_rate, weight_decay=1e-4)
+
+        # its kind of wasteful that we call fwd_models here even though the actions are random
+        init_data_source = GFNSampler(base_model, *fwd_models, lambda nodes, *args, **kwargs: torch.zeros((nodes.shape[0],)),
+                                      random_action_prob=1, node_features=args.num_features, edge_features=args.num_features,
+                                      max_len=args.max_len, max_nodes=args.max_nodes, batch_size=64, num_precomputed=0, device=args.device)
+
+                                      
+        data_loader = torch.utils.data.DataLoader(init_data_source, batch_size=None)
+        for it, (jagged_trajs, log_rewards) in zip(range(25), data_loader):
+
+            loss, metrics = get_loss_to_uniform_backward(jagged_trajs, log_rewards, base_model, None, *fwd_models, *bck_models, constant_log_z=1, device=args.device)
+            loss.backward()
+
+            main_init_optimiser.step()
+            main_init_optimiser.zero_grad()
+
+            bck_init_optimiser.step()
+            bck_init_optimiser.zero_grad()
+
+            print(loss.item())
+
 else:
     bck_models = []
 
@@ -164,6 +192,12 @@ log_z_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(log_z_optimiser, T_
 if parameterise_backward:
     bck_optimiser = torch.optim.Adam(itertools.chain(*(i.parameters() for i in bck_models)), lr=args.learning_rate*10, weight_decay=1e-4)
     bck_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(bck_optimiser, T_max=args.num_batches)
+
+    # (in case we pretrained the backward policy)
+    main_optimiser.zero_grad()
+    fwd_optimiser.zero_grad()
+    bck_optimiser.zero_grad()
+    log_z_optimiser.zero_grad()
 
 reward_fn_generator = get_reward_fn_generator(reward_fn, base=args.base)
 
