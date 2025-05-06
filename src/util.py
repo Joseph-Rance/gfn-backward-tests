@@ -1,4 +1,4 @@
-from math import log
+import math
 import torch
 
 
@@ -26,7 +26,7 @@ def is_n_connected(nodes, edges, _mask, ns=[3]):
     return num_nodes in ns and num_edges == num_nodes**2
 
 @torch.no_grad()
-def get_aligned_action_log_prob(nodes, edges, _mask, action_idx, b=0.8, correct_log_prob=log(0.9), incorrect_log_prob=log(0.02)):  # get actions following handmade policy (see notepad)
+def get_aligned_action_log_prob(nodes, edges, _mask, action_idx, b=0.8, correct_log_prob=math.log(0.9), incorrect_log_prob=math.log(0.02)):  # get actions following handmade policy (see notepad)
 
     num_nodes = torch.sum(torch.sum(nodes, dim=1) > 0, dim=0)
     num_edges = torch.sum(edges[:, :, 0], dim=(0, 1))

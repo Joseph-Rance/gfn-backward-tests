@@ -7,7 +7,14 @@ import torch
 import torch.nn as nn
 from graph_transformer_pytorch import GraphTransformer
 
-from data_source import GFNSampler, get_reward_fn_generator, get_smoothed_log_reward, get_uncertain_smoothed_log_reward, get_uniform_counting_log_reward
+from data_source import (
+    GFNSampler,
+    get_reward_fn_generator,
+    get_smoothed_log_reward,
+    get_uncertain_smoothed_log_reward,
+    get_uniform_counting_log_reward,
+    get_cliques_log_reward
+)
 from gfn import (
     get_loss_to_uniform_backward,
     get_tb_loss_uniform,
@@ -37,7 +44,7 @@ parser.add_argument("-c", "--cycle-len", type=int, default=5, help="how often to
 parser.add_argument("-t", "--num-test-graphs", type=int, default=64, help="number of graphs to generate for estimating metrics")
 
 # env
-parser.add_argument("-b", "--base", type=float, default=0.8, help="base for exponent used in reward calculation")
+parser.add_argument("-b", "--base", type=float, default=0.8, help="base for exponent used in reward calculation")  # TODO: generalise to other rewards
 parser.add_argument("-r", "--reward-idx", type=int, default=0, help="index of reward function to use")
 
 # model
@@ -46,7 +53,7 @@ parser.add_argument("-y", "--depth", type=int, default=1, help="depth of the tra
 parser.add_argument("-g", "--max-nodes", type=int, default=8, help="maximum number of nodes in a generated graph")
 parser.add_argument("-k", "--max-len", type=int, default=80, help="maximum number of actions per trajectory")
 parser.add_argument("-q", "--random-action-template", type=int, default=2, help="index of the random action config to use (see code)")
-parser.add_argument("-z", "--log-z", type=float, default=0, help="constant value of log(z) to use (learnt if None)")
+parser.add_argument("-z", "--log-z", type=float, default=None, help="constant value of log(z) to use (learnt if None)")
 parser.add_argument("-i", "--backward_init", type=str, default="random", help="how to initialise the backward policy")
 
 # training
@@ -55,9 +62,9 @@ parser.add_argument("-v", "--loss-arg-a", type=float, default=1)
 parser.add_argument("-u", "--loss-arg-b", type=float, default=1)
 parser.add_argument("-w", "--loss-arg-c", type=float, default=1)
 parser.add_argument("-m", "--batch-size", type=int, default=32)
-parser.add_argument("-p", "--num-precomputed", type=int, default=16, help="number of trajectories from precomputed, fully connected graphs")
+parser.add_argument("-p", "--num-precomputed", type=int, default=0, help="number of trajectories from precomputed, fully connected graphs")
 parser.add_argument("-j", "--edges-first", action="store_true", default=False, help="whether to add edges before nodes in precomputed trajectories")
-parser.add_argument("-a", "--learning-rate", type=float, default=0.00001)
+parser.add_argument("-a", "--learning-rate", type=float, default=0.0001)
 parser.add_argument("-n", "--max-update-norm", type=float, default=99.9)
 parser.add_argument("-e", "--num-batches", type=int, default=5_000)
 
@@ -122,23 +129,23 @@ configs = {
 get_loss, config = configs[args.loss_fn]
 parameterise_backward = config["parameterise_backward"]
 
-reward_fns = [get_smoothed_log_reward, get_uncertain_smoothed_log_reward, get_uniform_counting_log_reward]
+reward_fns = [get_smoothed_log_reward, get_uncertain_smoothed_log_reward, get_uniform_counting_log_reward, get_cliques_log_reward]
 reward_fn = reward_fns[args.reward_idx]
 
-#compile = lambxa x: torch.compile(x)
-compile = lambda x: x
+#compile_model = lambxa x: torch.compile(x)
+compile_model = lambda x: x
 
-base_model = compile(GraphTransformer(dim=args.num_features, depth=args.depth, edge_dim=args.num_features, with_feedforwards=True, gated_residual=True, rel_pos_emb=False)).to(args.device)
+base_model = compile_model(GraphTransformer(dim=args.num_features, depth=args.depth, edge_dim=args.num_features, with_feedforwards=True, gated_residual=True, rel_pos_emb=False)).to(args.device)
 
-fwd_stop_model = compile(nn.Sequential(nn.Linear(args.num_features, args.num_features*2), nn.LeakyReLU(), nn.Linear(args.num_features*2, 1))).to(args.device)
-fwd_node_model = compile(nn.Sequential(nn.Linear(args.num_features, args.num_features*2), nn.LeakyReLU(), nn.Linear(args.num_features*2, 1))).to(args.device)
-fwd_edge_model = compile(nn.Sequential(nn.Linear(args.num_features*3, args.num_features*3*2), nn.LeakyReLU(), nn.Linear(args.num_features*3*2, 1))).to(args.device)
+fwd_stop_model = compile_model(nn.Sequential(nn.Linear(args.num_features, args.num_features*2), nn.LeakyReLU(), nn.Linear(args.num_features*2, 1))).to(args.device)
+fwd_node_model = compile_model(nn.Sequential(nn.Linear(args.num_features, args.num_features*2), nn.LeakyReLU(), nn.Linear(args.num_features*2, 1))).to(args.device)
+fwd_edge_model = compile_model(nn.Sequential(nn.Linear(args.num_features*3, args.num_features*3*2), nn.LeakyReLU(), nn.Linear(args.num_features*3*2, 1))).to(args.device)
 fwd_models = [fwd_stop_model, fwd_node_model, fwd_edge_model]
 
 if parameterise_backward:
-    bck_stop_model = compile(nn.Sequential(nn.Linear(args.num_features, args.num_features*2), nn.LeakyReLU(), nn.Linear(args.num_features*2, 1))).to(args.device)
-    bck_node_model = compile(nn.Sequential(nn.Linear(args.num_features, args.num_features*2), nn.LeakyReLU(), nn.Linear(args.num_features*2, 1))).to(args.device)
-    bck_edge_model = compile(nn.Sequential(nn.Linear(args.num_features*3, args.num_features*3*2), nn.LeakyReLU(), nn.Linear(args.num_features*3*2, 1))).to(args.device)
+    bck_stop_model = compile_model(nn.Sequential(nn.Linear(args.num_features, args.num_features*2), nn.LeakyReLU(), nn.Linear(args.num_features*2, 1))).to(args.device)
+    bck_node_model = compile_model(nn.Sequential(nn.Linear(args.num_features, args.num_features*2), nn.LeakyReLU(), nn.Linear(args.num_features*2, 1))).to(args.device)
+    bck_edge_model = compile_model(nn.Sequential(nn.Linear(args.num_features*3, args.num_features*3*2), nn.LeakyReLU(), nn.Linear(args.num_features*3*2, 1))).to(args.device)
     bck_models = [bck_stop_model, bck_node_model, bck_edge_model]
 
     if args.backward_init == "uniform":
@@ -171,10 +178,10 @@ else:
 
 if args.loss_fn == "tb-max-ent":
     assert parameterise_backward
-    n_model = compile(nn.Sequential(nn.Linear(args.num_features, args.num_features*2), nn.LeakyReLU(), nn.Linear(args.num_features*2, 1))).to(args.device)
+    n_model = compile_model(nn.Sequential(nn.Linear(args.num_features, args.num_features*2), nn.LeakyReLU(), nn.Linear(args.num_features*2, 1))).to(args.device)
     bck_models.append(n_model)
 
-log_z_model = compile(nn.Linear(1, 1, bias=False)).to(args.device)
+log_z_model = compile_model(nn.Linear(1, 1, bias=False)).to(args.device)
 
 random_configs = [(0, 0, 0),
                   (0.5, 0, 0.5),
@@ -182,8 +189,8 @@ random_configs = [(0, 0, 0),
 random_prob, random_prob_decay, random_prob_min = random_configs[args.random_action_template]
 
 main_optimiser = torch.optim.Adam(base_model.parameters(), lr=args.learning_rate, weight_decay=1e-4)
-fwd_optimiser = torch.optim.Adam(itertools.chain(*(i.parameters() for i in fwd_models)), lr=args.learning_rate*10, weight_decay=1e-4)
-log_z_optimiser = torch.optim.Adam(log_z_model.parameters(), lr=args.learning_rate*10, weight_decay=1e-4)
+fwd_optimiser = torch.optim.Adam(itertools.chain(*(i.parameters() for i in fwd_models)), lr=args.learning_rate, weight_decay=1e-4)
+log_z_optimiser = torch.optim.Adam(log_z_model.parameters(), lr=args.learning_rate, weight_decay=1e-4)
 
 main_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(main_optimiser, T_max=args.num_batches)
 fwd_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(fwd_optimiser, T_max=args.num_batches)
@@ -202,8 +209,8 @@ if parameterise_backward:
 reward_fn_generator = get_reward_fn_generator(reward_fn, base=args.base)
 
 data_source = GFNSampler(base_model, *fwd_models, reward_fn_generator,
-                         node_features=args.num_features, edge_features=args.num_features,
-                         random_action_prob=random_prob, max_len=args.max_len, max_nodes=args.max_nodes, base=args.base,
+                         node_features=args.num_features, edge_features=args.num_features, random_action_prob=random_prob, 
+                         max_len=args.max_len, max_nodes=args.max_nodes, base=args.base, undirected=True,
                          batch_size=args.batch_size, num_precomputed=args.num_precomputed, edges_first=args.edges_first,
                          device=args.device)
 data_loader = torch.utils.data.DataLoader(data_source, batch_size=None)
@@ -263,9 +270,8 @@ if __name__ == "__main__":
             for m in (base_model, log_z_model, *fwd_models, *bck_models):
                 m.eval()
 
-            # TODO: temp
-            #if (it+1)%args.cycle_len == 0:
-            if it+1 in [1, 500, 1_000, 2_000, 5_000, 10_000]:
+            if (it+1)%args.cycle_len == 0:
+            #if it+1 in [1, 500, 1_000, 2_000, 5_000, 10_000]:  # TODO: temp
 
                 test_mean_log_reward = 0
                 test_node_counts, test_connectivities = [], []

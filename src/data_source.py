@@ -1,6 +1,7 @@
-from math import log
+import math
 import copy
 import numpy as np
+import networkx as nx
 import torch
 from torch.utils.data import IterableDataset
 
@@ -12,7 +13,7 @@ def get_smoothed_log_reward(nodes, edges, base=0.8, alpha=10, **kwargs):
     num_edges = torch.sum(edges[:, :, :, 0], dim=(1, 2))
     #return torch.logical_and(num_nodes == 2, num_edges == 0).long()  # (for testing)
     fully_connectedness = (num_edges - num_nodes**2) ** 2
-    return torch.clamp(log(base) * num_nodes - alpha * fully_connectedness, min=-1_000)
+    return torch.clamp(math.log(base) * num_nodes - alpha * fully_connectedness, min=-1_000)
 
 def get_uncertain_smoothed_log_reward(nodes, edges, base=0.8, alpha=10, base_std=0.1, added_std_nodes=[0, 2, 4, 6, 8, 10], added_std=0.1, eta=0.001, **kwargs):
     num_nodes = torch.sum(torch.sum(nodes, dim=2) > 0, dim=1)
@@ -21,11 +22,24 @@ def get_uncertain_smoothed_log_reward(nodes, edges, base=0.8, alpha=10, base_std
     fully_connectedness = (num_edges - num_nodes**2) ** 2
     noise_std = base_std + (added_std if num_nodes in added_std_nodes else 0)
     noise = torch.normal(mean=0, std=noise_std, size=(num_nodes.shape,))
-    return torch.clamp(log(max(base ** num_nodes + noise, eta)) - alpha * fully_connectedness, min=-1_000)
+    return torch.clamp(math.log(max(base ** num_nodes + noise, eta)) - alpha * fully_connectedness, min=-1_000)
 
 def get_uniform_counting_log_reward(nodes, _edges, **kwargs):  # this is like counting from that other paper but reversed for efficiency
     num_nodes = torch.sum(torch.sum(nodes, dim=2) > 0, dim=1)
-    return torch.clamp(- log(2) * num_nodes ** 2, max=1_000, min=-1_000)
+    return torch.clamp(- math.log(2) * num_nodes ** 2, max=1_000, min=-1_000)
+
+def get_cliques_log_reward(nodes, edges, n=3, m=10, eta=0.00001, **kwargs):  # reward is ReLU( m * # nodes in exactly 1 n-clique - # edges )
+    num_nodes = torch.sum(torch.sum(nodes, dim=2) > 0, dim=1)
+    num_edges = torch.sum(edges[:, :, :, 0], dim=(1, 2))
+    log_rewards = []
+    for i in range(len(nodes)):
+        adj_matrix = edges[i, :num_nodes[i], :num_nodes[i], 0]
+        g = nx.from_numpy_array(adj_matrix.cpu().numpy(), edge_attr=None)  # does not include create_using=nx.DiGraph, so we convert to an undirected graph
+        n_cliques = [c for c in nx.algorithms.clique.find_cliques(g) if len(c) == n]
+        n_cliques_per_node = np.bincount(sum(n_cliques, []), minlength=num_nodes[i])
+        reward = max(np.sum(n_cliques_per_node == 1) * m - num_edges[i], eta)
+        log_rewards.append(math.log(reward))
+    return torch.tensor(log_rewards)
 
 def get_reward_fn_generator(reward_fn, base=0.8, alpha_start=1_000_000, alpha_change=1):
     alpha = alpha_start
@@ -55,6 +69,7 @@ class GFNSampler(IterableDataset):
         edges_first=False,
         max_precomputed_len=4,
         base=0.8,
+        undirected=False,
         node_history_bounds=(0, 1),  # inclusive
         edge_history_bounds=(0, 1),  # inclusive
         masked_action_value=-80,
@@ -82,6 +97,7 @@ class GFNSampler(IterableDataset):
         self.edges_first = edges_first
         self.max_precomputed_len = max_precomputed_len
         self.base = base
+        self.undirected = undirected  # TODO: make this work with precomputed?
         self.node_history_bounds = node_history_bounds
         self.edge_history_bounds = edge_history_bounds
         self.masked_action_value = masked_action_value
@@ -148,6 +164,9 @@ class GFNSampler(IterableDataset):
 
         nodes[:, 0, 0] = 1
         masks[:, 0] = 1
+
+        if self.undirected:
+            edges[:, 0, 0, (0, 1)] = 1
 
         done = torch.tensor([False] * sample_size)
 
@@ -228,6 +247,9 @@ class GFNSampler(IterableDataset):
             nodes[idxs, next_node[idxs], 0] = add_node.float()
             masks[idxs, next_node[idxs]] = add_node
 
+            if self.undirected:
+                edges[idxs, next_node[idxs], next_node[idxs], (0, 1)] = 1
+
         # update edges
         edges[:, :, :, 1] += (torch.sum(edges, dim=3) > 0).float()  # increment existing nodes
         edges[:, :, :, 1] = torch.clamp(edges[:, :, :, 1], min=self.edge_history_bounds[0], max=self.edge_history_bounds[1])  # clip edge histories to control tree property
@@ -238,6 +260,8 @@ class GFNSampler(IterableDataset):
                 continue
             if selected_action_idxs[j] < prev_len**2:
                 edges[i, selected_action_idxs[j] // prev_len, selected_action_idxs[j] % prev_len, (0, 1)] = 1
+                if self.undirected:
+                    edges[i, selected_action_idxs[j] % prev_len, selected_action_idxs[j] // prev_len, (0, 1)] = 1
             j += 1
 
         # update done
