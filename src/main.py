@@ -306,7 +306,7 @@ if __name__ == "__main__":
                     gen_distribution[2*(n-1) + c] += 1
                 gen_distribution /= len(test_connectivities)
 
-                if args.reward_idx == 2:
+                if args.reward_idx == 2:  # TODO: update for new task
                     tru_distribution = np.array([v for n in range(1, 9) for v in [(1 - 2 ** (- n ** 2)) / 8, (2 ** (- n ** 2)) / 8]])
                 else:
                     s = args.base*(1-args.base**8)/(1-args.base)

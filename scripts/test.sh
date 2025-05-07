@@ -6,7 +6,7 @@ mkdir results
 cd results
 mkdir embeddings s metrics models batches
 cd ..
-python src/pred_template.py
+python src/embeddings.py --save-template
 PYTHONHASHSEED=0 python src/main.py --loss-fn tb-tlm --num-batches 5000 --save --test-template --seed 1
 cp -r results results_0
 PYTHONHASHSEED=0 python src/main.py --loss-fn tb-tlm --num-batches 5000 --save --test-template --seed 2
@@ -29,7 +29,7 @@ mkdir results
 cd results
 mkdir embeddings s metrics models batches
 cd ..
-python src/pred_template.py
+python src/embeddings.py --save-template
 PYTHONHASHSEED=0 python src/main.py --loss-fn tb-uniform --num-batches 5000 --save --test-template --seed 2
 cp -r results results_0
 PYTHONHASHSEED=0 python src/main.py --loss-fn tb-uniform --num-batches 5000 --save --test-template --seed 1 --num-features 20
@@ -50,7 +50,7 @@ mkdir results
 cd results
 mkdir embeddings s metrics models batches
 cd ..
-python src/pred_template.py
+python src/embeddings.py --save-template
 PYTHONHASHSEED=0 python src/main.py --loss-fn tb-uniform-rand --num-batches 5000 --save --test-template --seed 2 --loss-arg-a 0.2 --loss-arg-b 0.2 --loss-arg-c 0
 cp -r results results_0
 PYTHONHASHSEED=0 python src/main.py --loss-fn tb-uniform-rand-var --num-batches 5000 --save --test-template --seed 1 --loss-arg-a 0.2 --loss-arg-b 0.2
@@ -71,7 +71,7 @@ mkdir results
 cd results
 mkdir embeddings s metrics models batches
 cd ..
-python src/pred_template.py
+python src/embeddings.py --save-template
 PYTHONHASHSEED=0 python src/main.py --loss-fn tb-uniform-add-node --num-batches 5000 --save --test-template --seed 1 --loss-arg-a 0.01
 cp -r results results_0
 PYTHONHASHSEED=0 python src/main.py --loss-fn tb-uniform-add-node --num-batches 5000 --save --test-template --seed 1 --loss-arg-a 2
@@ -92,7 +92,7 @@ mkdir results
 cd results
 mkdir embeddings s metrics models batches
 cd ..
-python src/pred_template.py
+python src/embeddings.py --save-template
 PYTHONHASHSEED=0 python src/main.py --loss-fn tb-aligned --num-batches 5000 --save --test-template --seed 1 --loss-arg-a 0.2 --loss-arg-b 0.09
 cp -r results results_0
 PYTHONHASHSEED=0 python src/main.py --loss-fn tb-free --num-batches 5000 --save --test-template --seed 1

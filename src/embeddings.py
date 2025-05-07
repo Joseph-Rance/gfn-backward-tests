@@ -1,5 +1,6 @@
 from math import ceil
 import random
+import argparse
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -18,14 +19,14 @@ parser.add_argument("-s", "--seed", type=int, default=1)
 parser.add_argument("-t", "--save-template", action="store_true", default=False, help="generate results/s/template.npy")
 parser.add_argument("-n", "--num-features", type=int, default="number of features for inputs in the template")
 parser.add_argument("-l", "--template-length", type=int, default=1024, help="approx. number of entries in the template")
-parser.add_argument("-l", "--batch-size", type=int, default=1024, help="size of each template batch")
+parser.add_argument("-b", "--batch-size", type=int, default=32, help="size of each template batch")
 parser.add_argument("-m", "--merge-embeddings", action="store_true", default=False, help="merge results/embeddings into results/s")
 parser.add_argument("-c", "--run-colour", type=int, default=0, help="colour to assign to the run being merged in (-1 to get colour from results/colours.npy)")
 parser.add_argument("-g", "--process-data", action="store_true", default=False, help="save the data for a graph")
 parser.add_argument("-p", "--show-graph", action="store_true", default=False, help="show a matplotlib graph in a separate window")
-parser.add_argument("-s", "--save-graph", action="store_true", default=False, help="save a matplotlib graph as a file")
-parser.add_argument("-f", "--template-filename", type=str, default="results/s/loss_surface.png")
-parser.add_argument("-f", "--graph-filename", type=str, default="results/s/template.npy")
+parser.add_argument("-w", "--save-graph", action="store_true", default=False, help="save a matplotlib graph as a file")
+parser.add_argument("-u", "--template-filename", type=str, default="results/s/template.npy")
+parser.add_argument("-v", "--graph-filename", type=str, default="results/s/loss_surface.png")
 
 args = parser.parse_args()
 

@@ -248,7 +248,7 @@ class GFNSampler(IterableDataset):
             masks[idxs, next_node[idxs]] = add_node
 
             if self.undirected:
-                edges[idxs, next_node[idxs], next_node[idxs], (0, 1)] = 1
+                edges[idxs, next_node[idxs], next_node[idxs], 0] = edges[idxs, next_node[idxs], next_node[idxs], 1] = 1
 
         # update edges
         edges[:, :, :, 1] += (torch.sum(edges, dim=3) > 0).float()  # increment existing nodes
