@@ -351,14 +351,19 @@ if __name__ == "__main__":
                     losses.append(total_loss.item())
                     np.save(f"results/losses.npy", np.array(losses))
 
+                    fwd_embs, bck_embs = [], []
                     for nodes, edges, masks in np.load("results/s/template.npy", allow_pickle=True):
                         fwd_action_probs, bck_action_probs = get_action_log_probs_test_helper(nodes, edges, masks, args.loss_fn,
                                                                                               base_model, fwd_models, bck_models, log_z_model,
                                                                                               args.log_z, args.loss_arg_a, args.loss_arg_b, args.loss_arg_c,
                                                                                               device=args.device)
-                        np.save(f"results/embeddings/fwd_{it}.npy", torch.flatten(fwd_action_probs).to("cpu").numpy())
+                        fwd_embs.append(torch.flatten(fwd_action_probs).to("cpu").numpy())
                         if bck_action_probs is not None:
-                            np.save(f"results/embeddings/bck_{it}.npy", torch.flatten(bck_action_probs).to("cpu").numpy())
+                            bck_embs.append(torch.flatten(bck_action_probs).to("cpu").numpy())
+
+                    np.save(f"results/embeddings/fwd_{it}.npy", np.stack(fwd_embs))
+                    if bck_action_probs is not None:
+                        np.save(f"results/embeddings/bck_{it}.npy", np.stack(bck_embs))
 
                 if args.save:
                     names = ("stop_model", "node_model", "edge_model")

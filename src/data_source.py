@@ -286,14 +286,14 @@ class GFNSampler(IterableDataset):
                 i += 1
 
             num_nodes[num_nodes == 0] = self.max_precomputed_len
-        
+
         else:
             num_nodes = torch.randint(1, self.max_precomputed_len + 1, (self.num_precomputed,), device="cpu")
 
         for n in num_nodes:
             trajs.append(self.get_all_precomputed()[int(n)-1])
 
-        log_rewards = log(self.base) * num_nodes
+        log_rewards = math.log(self.base) * num_nodes
 
         #log_rewards = torch.tensor([0] * len(num_nodes))  # (for testing)
 

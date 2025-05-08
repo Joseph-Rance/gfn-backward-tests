@@ -8,9 +8,6 @@ from sklearn import manifold
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from graph_transformer_pytorch import GraphTransformer
-
-from data_source import GFNSampler, get_reward_fn_generator, get_smoothed_log_reward
 
 
 parser = argparse.ArgumentParser()
@@ -20,7 +17,7 @@ parser.add_argument("-t", "--save-template", action="store_true", default=False,
 parser.add_argument("-n", "--num-features", type=int, default=25, help="number of features for inputs in the template")
 parser.add_argument("-l", "--template-length", type=int, default=1024, help="approx. number of entries in the template")
 parser.add_argument("-b", "--batch-size", type=int, default=32, help="size of each template batch")
-parser.add_argument("-v", "--results-dir", type=str, default="results", help="directory to get results from")
+parser.add_argument("-r", "--results-dir", type=str, default="results", help="directory to get results from")
 parser.add_argument("-i", "--init-embeddings", action="store_true", default=False, help="generate files in results/s")
 parser.add_argument("-m", "--merge-embeddings", action="store_true", default=False, help="merge results/embeddings into results/s")
 parser.add_argument("-c", "--run-colour", type=int, default=0, help="colour to assign to the run being merged in (-1 to get colour from results/colours.npy)")
@@ -39,6 +36,9 @@ torch.manual_seed(args.seed)
 
 
 if args.save_template:
+
+    from graph_transformer_pytorch import GraphTransformer
+    from data_source import GFNSampler, get_reward_fn_generator, get_smoothed_log_reward
 
     INTERNAL_BATCH_SIZE = 32
     NUM_INTERNAL_BATCHES = round(args.template_length / INTERNAL_BATCH_SIZE)
@@ -92,16 +92,17 @@ if args.merge_embeddings:
     fwd_embeddings = [i for i in np.load(f"{args.results_dir}/s/fwd_embeddings.npy")]
     bck_embeddings = [i for i in np.load(f"{args.results_dir}/s/bck_embeddings.npy")]
 
-    for f in os.listdir(f"{args.results_dir}/embeddings"):
+    #for f in os.listdir(f"{args.results_dir}/embeddings"):
+    # 
+    #    if f[:4] not in ["fwd_", "bck_"]:
+    #        continue
 
-        if f[:4] not in ["fwd_", "bck_"]:
-            continue
-
-        fwd_embeddings.append(np.load(f"{args.results_dir}/embeddings/{f}"))
-        bck_embeddings.append(np.load(f"{args.results_dir}/embeddings/{f}"))
+    for i in range(99, 30_000, 100):
+        fwd_embeddings.append(np.load(f"{args.results_dir}/embeddings/fwd_{i}.npy"))
+        bck_embeddings.append(np.load(f"{args.results_dir}/embeddings/bck_{i}.npy"))
 
     new_losses = np.load(f"{args.results_dir}/losses.npy")
-    losses = np.concatenate((np.load(f"{args.results_dir}/s/losses.npy"), new_losses), dim=0)
+    losses = np.concatenate((np.load(f"{args.results_dir}/s/losses.npy"), new_losses), axis=0)
 
     if args.run_colour == -1:
         colours = np.concatenate((np.load(f"{args.results_dir}/s/colours.npy"), np.load(f"{args.results_dir}/colours.npy")), axis=0)
@@ -113,10 +114,7 @@ if args.merge_embeddings:
     np.save(f"{args.results_dir}/s/losses.npy", losses)
     np.save(f"{args.results_dir}/s/colours.npy", colours)
 
-gen_graph = args.show_graph or args.save_graph
-process_data = args.process_data or gen_graph
-
-if process_data:
+if args.process_data:
     fwd_embeddings = np.load(f"{args.results_dir}/s/fwd_embeddings.npy")
     bck_embeddings = np.load(f"{args.results_dir}/s/bck_embeddings.npy")
     losses = np.load(f"{args.results_dir}/s/losses.npy")
@@ -126,13 +124,25 @@ if process_data:
     fwd_vals = tsne.fit_transform(fwd_embeddings).flatten()
     bck_vals = tsne.fit_transform(bck_embeddings).flatten()
 
-    data = np.concatenate((fwd_vals, bck_vals, losses, colours), axis=1)
-    np.save("{args.results_dir}/s/processed_data.npy")
+    plt.plot(fwd_vals)
+    plt.savefig("test_a.png")
+    plt.clf()
+    plt.plot(bck_vals)
+    plt.savefig("test_b.png")
+    plt.clf()
 
-if gen_graph:  # TODO: we want to produce a surface from some of the points and a path over the surface from some of the others
+    data = np.stack((fwd_vals, bck_vals, losses, colours))
+    np.save(f"{args.results_dir}/s/processed_data.npy", data)
+
+if args.show_graph or args.save_graph:  # TODO: we want to produce a surface from some of the points and a path over the surface from some of the others
+
+    if not args.process_data:
+        fwd_vals, bck_vals, losses, colours = np.load(f"{args.results_dir}/s/processed_data.npy")
+
+    from math import log
     fig = plt.figure()
     ax = fig.add_subplot(projection='3d')
-    ax.scatter(fwd_vals, bck_vals, losses, c=colours)
+    ax.scatter(fwd_vals, bck_vals, [log(x) for x in losses], c=colours)
     ax.set_xlabel("forward policy")
     ax.set_ylabel("backward policy")
     ax.set_zlabel("loss")
