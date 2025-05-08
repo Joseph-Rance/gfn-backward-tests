@@ -17,16 +17,18 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument("-s", "--seed", type=int, default=1)
 parser.add_argument("-t", "--save-template", action="store_true", default=False, help="generate results/s/template.npy")
-parser.add_argument("-n", "--num-features", type=int, default="number of features for inputs in the template")
+parser.add_argument("-n", "--num-features", type=int, default=25, help="number of features for inputs in the template")
 parser.add_argument("-l", "--template-length", type=int, default=1024, help="approx. number of entries in the template")
 parser.add_argument("-b", "--batch-size", type=int, default=32, help="size of each template batch")
+parser.add_argument("-v", "--results-dir", type=str, default="results", help="directory to get results from")
+parser.add_argument("-i", "--init-embeddings", action="store_true", default=False, help="generate files in results/s")
 parser.add_argument("-m", "--merge-embeddings", action="store_true", default=False, help="merge results/embeddings into results/s")
 parser.add_argument("-c", "--run-colour", type=int, default=0, help="colour to assign to the run being merged in (-1 to get colour from results/colours.npy)")
 parser.add_argument("-g", "--process-data", action="store_true", default=False, help="save the data for a graph")
 parser.add_argument("-p", "--show-graph", action="store_true", default=False, help="show a matplotlib graph in a separate window")
 parser.add_argument("-w", "--save-graph", action="store_true", default=False, help="save a matplotlib graph as a file")
-parser.add_argument("-u", "--template-filename", type=str, default="results/s/template.npy")
-parser.add_argument("-v", "--graph-filename", type=str, default="results/s/loss_surface.png")
+parser.add_argument("-u", "--template-filename", type=str, default="s/template.npy", help="filename of template starting from results-dir")
+parser.add_argument("-v", "--graph-filename", type=str, default="s/loss_surface.png", help="filename of output png starting from results-dir")
 
 args = parser.parse_args()
 
@@ -71,49 +73,61 @@ if args.save_template:
 
             batch = []
 
-    np.save(args.template_filename, outs, allow_pickle=True)
+    np.save(args.results_dir + "/" + args.template_filename, outs, allow_pickle=True)
+
+if args.init_embeddings:
+
+    np.save(f"{args.results_dir}/s/fwd_embeddings.npy", np.zeros((0,)))
+    np.save(f"{args.results_dir}/s/bck_embeddings.npy", np.zeros((0,)))
+    np.save(f"{args.results_dir}/s/losses.npy", np.zeros((0,)))
+    np.save(f"{args.results_dir}/s/colours.npy", np.zeros((0,)))
 
 if args.merge_embeddings:
 
-    fwd_embeddings = [i for i in np.load("results/s/fwd_embeddings.npy")]
-    bck_embeddings = [i for i in np.load("results/s/bck_embeddings.npy")]
+    assert os.path.isfile(f"{args.results_dir}/s/fwd_embeddings.npy") \
+       and os.path.isfile(f"{args.results_dir}/s/bck_embeddings.npy") \
+       and os.path.isfile(f"{args.results_dir}/s/losses.npy") \
+       and os.path.isfile(f"{args.results_dir}/s/colours.npy")
 
-    for f in os.listdir("results/embeddings"):
+    fwd_embeddings = [i for i in np.load(f"{args.results_dir}/s/fwd_embeddings.npy")]
+    bck_embeddings = [i for i in np.load(f"{args.results_dir}/s/bck_embeddings.npy")]
+
+    for f in os.listdir(f"{args.results_dir}/embeddings"):
 
         if f[:4] not in ["fwd_", "bck_"]:
             continue
 
-        fwd_embeddings.append(np.load(f"results/embeddings/{f}"))
-        bck_embeddings.append(np.load(f"results/embeddings/{f}"))
+        fwd_embeddings.append(np.load(f"{args.results_dir}/embeddings/{f}"))
+        bck_embeddings.append(np.load(f"{args.results_dir}/embeddings/{f}"))
 
-    new_losses = np.load(f"results/losses.npy")
-    losses = np.concatenate((np.load("results/s/losses.npy"), new_losses), dim=0)
+    new_losses = np.load(f"{args.results_dir}/losses.npy")
+    losses = np.concatenate((np.load(f"{args.results_dir}/s/losses.npy"), new_losses), dim=0)
 
     if args.run_colour == -1:
-        colours = np.concatenate((np.load("results/s/colours.npy"), np.load("results/colours.npy")), axis=0)
+        colours = np.concatenate((np.load(f"{args.results_dir}/s/colours.npy"), np.load(f"{args.results_dir}/colours.npy")), axis=0)
     else:
-        colours = np.concatenate((np.load("results/s/colours.npy"), [args.run_colour] * len(new_losses)), axis=0)
+        colours = np.concatenate((np.load(f"{args.results_dir}/s/colours.npy"), [args.run_colour] * len(new_losses)), axis=0)
 
-    np.save(f"results/s/fwd_embeddings.npy", np.array(fwd_embeddings))
-    np.save(f"results/s/bck_embeddings.npy", np.array(bck_embeddings))
-    np.save(f"results/s/losses.npy", losses)
-    np.save(f"results/s/colours.npy", colours)
+    np.save(f"{args.results_dir}/s/fwd_embeddings.npy", np.array(fwd_embeddings))
+    np.save(f"{args.results_dir}/s/bck_embeddings.npy", np.array(bck_embeddings))
+    np.save(f"{args.results_dir}/s/losses.npy", losses)
+    np.save(f"{args.results_dir}/s/colours.npy", colours)
 
 gen_graph = args.show_graph or args.save_graph
 process_data = args.process_data or gen_graph
 
 if process_data:
-    fwd_embeddings = np.load(f"results/s/fwd_embeddings.npy")
-    bck_embeddings = np.load(f"results/s/bck_embeddings.npy")
-    losses = np.load(f"results/s/losses.npy")
-    colours = np.load(f"results/s/colours.npy")
+    fwd_embeddings = np.load(f"{args.results_dir}/s/fwd_embeddings.npy")
+    bck_embeddings = np.load(f"{args.results_dir}/s/bck_embeddings.npy")
+    losses = np.load(f"{args.results_dir}/s/losses.npy")
+    colours = np.load(f"{args.results_dir}/s/colours.npy")
 
     tsne = manifold.TSNE(n_components=1, random_state=1)
     fwd_vals = tsne.fit_transform(fwd_embeddings).flatten()
     bck_vals = tsne.fit_transform(bck_embeddings).flatten()
 
     data = np.concatenate((fwd_vals, bck_vals, losses, colours), axis=1)
-    np.save("results/s/processed_data.npy")
+    np.save("{args.results_dir}/s/processed_data.npy")
 
 if gen_graph:  # TODO: we want to produce a surface from some of the points and a path over the surface from some of the others
     fig = plt.figure()
@@ -124,7 +138,7 @@ if gen_graph:  # TODO: we want to produce a surface from some of the points and 
     ax.set_zlabel("loss")
 
 if args.save_graph:
-    plt.savefig(args.graph_filename)
+    plt.savefig(args.results_dir + "/" + args.graph_filename)
 
 if args.show_graph:
     plt.show()

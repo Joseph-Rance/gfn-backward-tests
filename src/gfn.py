@@ -273,6 +273,7 @@ def get_tb_loss_tlm(
         connected_prop += (num_edges == num_nodes**2) / len(jagged_trajs)
         mean_num_nodes += num_nodes / len(jagged_trajs)
 
+    # TODO: when log_z is passed directly we can't call item() (for every metrics output)
     return loss, {"log_z": log_z.item(), "mean_log_reward": torch.mean(log_rewards).item(), "connected_prop": connected_prop.item(),
                   "mean_num_nodes": mean_num_nodes.item(), "tb_loss": tb_loss.detach(), "back_loss": back_loss.detach()}
 
