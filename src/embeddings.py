@@ -14,7 +14,7 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument("-s", "--seed", type=int, default=1)
 parser.add_argument("-t", "--save-template", action="store_true", default=False, help="generate results/s/template.npy")
-parser.add_argument("-n", "--num-features", type=int, default=25, help="number of features for inputs in the template")
+parser.add_argument("-n", "--num-features", type=int, default=8, help="number of features for inputs in the template")
 parser.add_argument("-l", "--template-length", type=int, default=1024, help="approx. number of entries in the template")
 parser.add_argument("-b", "--batch-size", type=int, default=32, help="size of each template batch")
 parser.add_argument("-r", "--results-dir", type=str, default="results", help="directory to get results from")

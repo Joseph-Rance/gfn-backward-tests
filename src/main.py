@@ -209,8 +209,8 @@ if parameterise_backward:
 reward_fn_generator = get_reward_fn_generator(reward_fn, base=args.base)
 
 data_source = GFNSampler(base_model, *fwd_models, reward_fn_generator,
-                         node_features=args.num_features, edge_features=args.num_features, random_action_prob=random_prob, 
-                         max_len=args.max_len, max_nodes=args.max_nodes, base=args.base, undirected=True,
+                         node_features=args.num_features, edge_features=args.num_features,
+                         random_action_prob=random_prob, max_len=args.max_len, max_nodes=args.max_nodes, base=args.base,
                          batch_size=args.batch_size, num_precomputed=args.num_precomputed, edges_first=args.edges_first,
                          device=args.device)
 data_loader = torch.utils.data.DataLoader(data_source, batch_size=None)
@@ -361,9 +361,9 @@ if __name__ == "__main__":
                         if bck_action_probs is not None:
                             bck_embs.append(torch.flatten(bck_action_probs).to("cpu").numpy())
 
-                    np.save(f"results/embeddings/fwd_{it}.npy", np.stack(fwd_embs))
+                    np.save(f"results/embeddings/fwd_{it}.npy", np.concatenate(fwd_embs, axis=0))
                     if bck_action_probs is not None:
-                        np.save(f"results/embeddings/bck_{it}.npy", np.stack(bck_embs))
+                        np.save(f"results/embeddings/bck_{it}.npy", np.concatenate(bck_embs, axis=0))
 
                 if args.save:
                     names = ("stop_model", "node_model", "edge_model")
