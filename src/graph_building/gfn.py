@@ -99,9 +99,9 @@ def get_action_probs(
 
 def process_trajs(get_loss_fn):
 
-    def get_loss_fn_from_trajs(jagged_trajs, log_rewards, base_model, log_z_model, *model_heads, constant_log_z=None, device="cuda", **kwargs):
+    def get_loss_fn_from_trajs(jagged_trajs, log_rewards, base_models, log_z_model, *model_heads, constant_log_z=None, device="cuda", **kwargs):
 
-        for m in (base_model, *model_heads):
+        for m in (*base_models, *model_heads):
             m.train()
 
         # flatten inputs from jagged list
@@ -117,10 +117,13 @@ def process_trajs(get_loss_fn):
         post_padding_len = nodes.shape[1]
         actions = adjust_action_idxs(torch.tensor([a for _s, a in trajs]), pre_padding_lens, post_padding_len)
 
-        embeddings = get_embeddings(base_model, nodes, edges, masks, device=device)
         log_z = torch.tensor(constant_log_z) if constant_log_z is not None else log_z_model(torch.tensor([[1.]], device=device))
 
-        return get_loss_fn(jagged_trajs, traj_lens, *embeddings, actions, log_z, log_rewards, *model_heads, device=device, **kwargs)
+        embeddings = []
+        for base_model in base_models:
+            embeddings.append(get_embeddings(base_model, nodes, edges, masks, device=device))
+
+        return get_loss_fn(jagged_trajs, traj_lens, *list(zip(*embeddings)), actions, log_z, log_rewards, *model_heads, device=device, **kwargs)
 
     return get_loss_fn_from_trajs
 
@@ -136,7 +139,7 @@ def get_loss_to_uniform_backward(
     trajs = [action for traj in jagged_trajs for action in traj]
     uniform_p_b = torch.tensor([math.log(get_num_previous_acts(s)) for s, _a in trajs], device=device)
 
-    bck_action_probs = get_action_probs(*raw_embeddings, *embedding_structure, bck_stop_model, bck_node_model, bck_edge_model, random_action_prob=0, apply_masks=True)
+    bck_action_probs = get_action_probs(*raw_embeddings[0], *embedding_structure[0], bck_stop_model, bck_node_model, bck_edge_model, random_action_prob=0, apply_masks=True)
     log_p_b = bck_action_probs[list(range(len(bck_action_probs))), torch.roll(actions, 1, 0)].to(device)  # prob of previous action
 
     first_graph_idxs = torch.cumsum(traj_lens, 0)
@@ -158,7 +161,7 @@ def get_tb_loss_uniform(
         device="cuda"
     ):
 
-    action_probs = get_action_probs(*raw_embeddings, *embedding_structure, stop_model, node_model, edge_model, random_action_prob=0, apply_masks=True)
+    action_probs = get_action_probs(*raw_embeddings[0], *embedding_structure[0], stop_model, node_model, edge_model, random_action_prob=0, apply_masks=True)
 
     log_p_f = action_probs[list(range(len(action_probs))), actions]
     log_p_f[torch.cumsum(traj_lens, 0) - 1] = 0  # don't count padding states (kind of wasteful to compute these)
@@ -184,34 +187,50 @@ def get_tb_loss_uniform(
                   "mean_num_nodes": mean_num_nodes.item(), "tb_loss": loss.detach()}
 
 @process_trajs
-def get_tb_loss_add_node_mult(
+def get_tb_loss_action_mult(
         jagged_trajs, traj_lens, raw_embeddings, embedding_structure,
         actions, log_z, log_rewards,
         stop_model, node_model, edge_model,
-        n=1, device="cuda"
+        action_type=0, n=1, device="cuda"
     ):
 
-    action_probs = get_action_probs(*raw_embeddings, *embedding_structure, stop_model, node_model, edge_model, random_action_prob=0, apply_masks=True)
+    action_probs = get_action_probs(*raw_embeddings[0], *embedding_structure[0], stop_model, node_model, edge_model, random_action_prob=0, apply_masks=True)
 
     log_p_f = action_probs[list(range(len(action_probs))), actions]
     log_p_f[torch.cumsum(traj_lens, 0) - 1] = 0  # don't count padding states (kind of wasteful to compute these)
 
     batch_idx = torch.arange(len(traj_lens), device=device).repeat_interleave(traj_lens)
     traj_log_p_f = scatter(log_p_f.to(device), batch_idx, dim=0, dim_size=traj_lens.shape[0], reduce="sum")
-    traj_log_p_b = torch.tensor([-sum([math.log(get_num_previous_acts(s)) for s, _a in t[1:]]) for t in jagged_trajs], device=device)
-
     traj_log_p_b = torch.zeros((len(jagged_trajs),), device=device)
+
     for i, t in enumerate(jagged_trajs):
-        for s, a in t[1:]:
+        for (__, a), (s, __) in zip(t[:-1], t[1:]):
             num = get_num_previous_acts(s)
-            has_disconnected = (torch.sum(s[1][:, -1]) == 0 and torch.sum(s[1][-1, :]) == 0).item()
-            if has_disconnected:
-                if a == len(s[2])**2:
+
+            if action_type == 0:  # edge
+
+                num_edges = torch.sum(s[1][:, :, 0], dim=(0, 1))
+                if a < len(s[2])**2:  # if action is add edge, assign more weight
+                    traj_log_p_b[i] += math.log(n/(num+num_edges*(n-1)))
+                else:  # otherwise, assign normal weight
+                    traj_log_p_b[i] += math.log(1/(num+num_edges*(n-1)))  # we need to adjust for the added weight of a potential add edge
+
+            elif action_type == 1:  # node
+
+                if a == len(s[2])**2:  # if action is add node, assign more weight
                     traj_log_p_b[i] += math.log(n/(num+n-1))
-                else:
-                    traj_log_p_b[i] += math.log(1/(num+n-1))
-            else:
-                traj_log_p_b[i] += math.log(1/num)
+                else:  # otherwise, assign normal weight
+                    num_nodes = torch.sum(torch.sum(s[0], dim=1) > 0, dim=1)
+                    has_disconnected = int((torch.sum(s[1][:, num_nodes-1]) == 0 and torch.sum(s[1][num_nodes-1, :]) == 0).item())
+                    traj_log_p_b[i] += math.log(1/(num+has_disconnected*(n-1)))  # we need to adjust for the added weight of a potential add node
+
+            else:  # stop
+
+                assert action_type == 2
+                if a == len(s[2])**2 + 1:  # if action is stop, assign more weight
+                    traj_log_p_b[i] += math.log(n/(num+n-1))
+                else:  # otherwise, assign normal weight (no need to adjust for a potential use of stop before a non-terminal state)
+                    traj_log_p_b[i] += math.log(1/num)
 
     log_rewards = log_rewards.to(device)
 
@@ -238,8 +257,8 @@ def get_tb_loss_tlm(
         device="cuda"
     ):
 
-    fwd_action_probs = get_action_probs(*raw_embeddings, *embedding_structure, fwd_stop_model, fwd_node_model, fwd_edge_model, random_action_prob=0, apply_masks=True)
-    bck_action_probs = get_action_probs(*raw_embeddings, *embedding_structure, bck_stop_model, bck_node_model, bck_edge_model, random_action_prob=0, apply_masks=False)
+    fwd_action_probs = get_action_probs(*raw_embeddings[0], *embedding_structure[0], fwd_stop_model, fwd_node_model, fwd_edge_model, random_action_prob=0, apply_masks=True)
+    bck_action_probs = get_action_probs(*raw_embeddings[0], *embedding_structure[0], bck_stop_model, bck_node_model, bck_edge_model, random_action_prob=0, apply_masks=False)
 
     log_p_f = fwd_action_probs[list(range(len(fwd_action_probs))), actions]
     log_p_b = bck_action_probs[list(range(len(bck_action_probs))), torch.roll(actions, 1, 0)]  # prob of previous action
@@ -277,7 +296,7 @@ def get_tb_loss_tlm(
                   "mean_num_nodes": mean_num_nodes.item(), "tb_loss": tb_loss.detach(), "back_loss": back_loss.detach()}
 
 @process_trajs
-def get_tb_loss_smooth_tlm(
+def get_tb_loss_soft_tlm(
         jagged_trajs, traj_lens, raw_embeddings, embedding_structure,
         actions, log_z, log_rewards,
         fwd_stop_model, fwd_node_model, fwd_edge_model,
@@ -286,8 +305,8 @@ def get_tb_loss_smooth_tlm(
         device="cuda"
     ):
 
-    fwd_action_probs = get_action_probs(*raw_embeddings, *embedding_structure, fwd_stop_model, fwd_node_model, fwd_edge_model, random_action_prob=0, apply_masks=True)
-    bck_action_probs = get_action_probs(*raw_embeddings, *embedding_structure, bck_stop_model, bck_node_model, bck_edge_model, random_action_prob=0, apply_masks=False)
+    fwd_action_probs = get_action_probs(*raw_embeddings[0], *embedding_structure[0], fwd_stop_model, fwd_node_model, fwd_edge_model, random_action_prob=0, apply_masks=True)
+    bck_action_probs = get_action_probs(*raw_embeddings[0], *embedding_structure[0], bck_stop_model, bck_node_model, bck_edge_model, random_action_prob=0, apply_masks=False)
 
     log_p_f = fwd_action_probs[list(range(len(fwd_action_probs))), actions]
     log_p_b = bck_action_probs[list(range(len(bck_action_probs))), torch.roll(actions, 1, 0)]  # prob of previous action
@@ -301,12 +320,67 @@ def get_tb_loss_smooth_tlm(
 
     batch_idx = torch.arange(len(traj_lens), device=device).repeat_interleave(traj_lens)
     traj_log_p_f = scatter(log_p_f.to(device), batch_idx, dim=0, dim_size=traj_lens.shape[0], reduce="sum")
-    traj_log_p_b_tlm = scatter(log_p_b.to(device), batch_idx, dim=0, dim_size=traj_lens.shape[0], reduce="sum")
+    tlm_traj_log_p_b = scatter(log_p_b.to(device), batch_idx, dim=0, dim_size=traj_lens.shape[0], reduce="sum")
 
-    back_loss = -traj_log_p_b_tlm.mean()
-    tlm_traj_log_p_b = traj_log_p_b_tlm.detach()
+    with torch.no_grad():  # necessary?
+        uniform_log_p_b = torch.tensor([-sum([math.log(get_num_previous_acts(s)) for s, _a in t[1:]]) for t in jagged_trajs], device=device)
 
-    uniform_log_p_b = torch.tensor([-sum([math.log(get_num_previous_acts(s)) for s, _a in t[1:]]) for t in jagged_trajs], device=device)
+    traj_log_p_b = (1-a) * tlm_traj_log_p_b + (a) * uniform_log_p_b
+
+    back_loss = -traj_log_p_b.mean()  # this is kind of weird
+    traj_log_p_b = traj_log_p_b.detach()
+
+    log_rewards = log_rewards.to(device)
+
+    traj_diffs = (log_z + traj_log_p_f) - (log_rewards + traj_log_p_b)  # log_z gets broadcast into a vector here
+    tb_loss = huber(traj_diffs).mean()
+    
+    loss = tb_loss + back_loss
+
+    connected_prop = mean_num_nodes = 0
+    for traj in jagged_trajs:
+        nodes, edges, _mask = traj[-2][0]
+        num_nodes = torch.sum(torch.sum(nodes, dim=1) > 0, dim=0)
+        num_edges = torch.sum(edges[:, :, 0], dim=(0, 1))
+        connected_prop += (num_edges == num_nodes**2) / len(jagged_trajs)
+        mean_num_nodes += num_nodes / len(jagged_trajs)
+
+    return loss, {"log_z": log_z.item(), "mean_log_reward": torch.mean(log_rewards).item(), "connected_prop": connected_prop.item(),
+                  "mean_num_nodes": mean_num_nodes.item(), "tb_loss": tb_loss.detach(), "back_loss": back_loss.detach()}
+
+@process_trajs
+def get_tb_loss_smooth_tlm(
+        jagged_trajs, traj_lens, raw_embeddings, embedding_structure,
+        actions, log_z, log_rewards,
+        fwd_stop_model, fwd_node_model, fwd_edge_model,
+        bck_stop_model, bck_node_model, bck_edge_model,
+        a=0.5,
+        device="cuda"
+    ):
+
+    fwd_action_probs = get_action_probs(*raw_embeddings[0], *embedding_structure[0], fwd_stop_model, fwd_node_model, fwd_edge_model, random_action_prob=0, apply_masks=True)
+    bck_action_probs = get_action_probs(*raw_embeddings[0], *embedding_structure[0], bck_stop_model, bck_node_model, bck_edge_model, random_action_prob=0, apply_masks=False)
+
+    log_p_f = fwd_action_probs[list(range(len(fwd_action_probs))), actions]
+    log_p_b = bck_action_probs[list(range(len(bck_action_probs))), torch.roll(actions, 1, 0)]  # prob of previous action
+    log_p_b = torch.roll(log_p_b, -1, 0)  # we could save a roll here but it would be confusing
+
+    final_graph_idxs = torch.cumsum(traj_lens, 0) - 1
+
+    # don't count padding states (kind of wasteful to compute these)
+    log_p_f[final_graph_idxs] = 0
+    log_p_b[final_graph_idxs] = 0
+
+    batch_idx = torch.arange(len(traj_lens), device=device).repeat_interleave(traj_lens)
+    traj_log_p_f = scatter(log_p_f.to(device), batch_idx, dim=0, dim_size=traj_lens.shape[0], reduce="sum")
+    tlm_traj_log_p_b = scatter(log_p_b.to(device), batch_idx, dim=0, dim_size=traj_lens.shape[0], reduce="sum")
+
+    back_loss = -tlm_traj_log_p_b.mean()
+    tlm_traj_log_p_b = tlm_traj_log_p_b.detach()
+
+    with torch.no_grad():  # necessary?
+        uniform_log_p_b = torch.tensor([-sum([math.log(get_num_previous_acts(s)) for s, _a in t[1:]]) for t in jagged_trajs], device=device)
+
     traj_log_p_b = (1-a) * tlm_traj_log_p_b + (a) * uniform_log_p_b
 
     log_rewards = log_rewards.to(device)
@@ -337,8 +411,8 @@ def get_tb_loss_biased_tlm(
         device="cuda"
     ):
 
-    fwd_action_probs = get_action_probs(*raw_embeddings, *embedding_structure, fwd_stop_model, fwd_node_model, fwd_edge_model, random_action_prob=0, apply_masks=True)
-    bck_action_probs = get_action_probs(*raw_embeddings, *embedding_structure, bck_stop_model, bck_node_model, bck_edge_model, random_action_prob=0, apply_masks=False)
+    fwd_action_probs = get_action_probs(*raw_embeddings[0], *embedding_structure[0], fwd_stop_model, fwd_node_model, fwd_edge_model, random_action_prob=0, apply_masks=True)
+    bck_action_probs = get_action_probs(*raw_embeddings[0], *embedding_structure[0], bck_stop_model, bck_node_model, bck_edge_model, random_action_prob=0, apply_masks=False)
 
     log_p_f = fwd_action_probs[list(range(len(fwd_action_probs))), actions]
     log_p_b = bck_action_probs[list(range(len(bck_action_probs))), torch.roll(actions, 1, 0)]  # prob of previous action
@@ -378,6 +452,50 @@ def get_tb_loss_biased_tlm(
                   "mean_num_nodes": mean_num_nodes.item(), "tb_loss": tb_loss.detach(), "back_loss": back_loss.detach()}
 
 @process_trajs
+def get_tb_loss_frozen(
+        jagged_trajs, traj_lens, raw_embeddings, embedding_structure,
+        actions, log_z, log_rewards,
+        fwd_stop_model, fwd_node_model, fwd_edge_model,
+        bck_stop_model, bck_node_model, bck_edge_model,
+        device="cuda"
+    ):
+
+    fwd_action_probs = get_action_probs(*raw_embeddings[0], *embedding_structure[0], fwd_stop_model, fwd_node_model, fwd_edge_model, random_action_prob=0, apply_masks=True)
+    bck_action_probs = get_action_probs(*raw_embeddings[1], *embedding_structure[1], bck_stop_model, bck_node_model, bck_edge_model, random_action_prob=0, apply_masks=False)
+
+    log_p_f = fwd_action_probs[list(range(len(fwd_action_probs))), actions]
+    log_p_b = bck_action_probs[list(range(len(bck_action_probs))), torch.roll(actions, 1, 0)]  # prob of previous action
+    log_p_b = torch.roll(log_p_b, -1, 0)  # we could save a roll here but it would be confusing
+
+    final_graph_idxs = torch.cumsum(traj_lens, 0) - 1
+
+    # don't count padding states (kind of wasteful to compute these)
+    log_p_f[final_graph_idxs] = 0
+    log_p_b[final_graph_idxs] = 0
+
+    batch_idx = torch.arange(len(traj_lens), device=device).repeat_interleave(traj_lens)
+    traj_log_p_f = scatter(log_p_f.to(device), batch_idx, dim=0, dim_size=traj_lens.shape[0], reduce="sum")
+    traj_log_p_b = scatter(log_p_b.to(device), batch_idx, dim=0, dim_size=traj_lens.shape[0], reduce="sum")
+
+    traj_log_p_b = traj_log_p_b.detach()
+
+    log_rewards = log_rewards.to(device)
+
+    traj_diffs = (log_z + traj_log_p_f) - (log_rewards + traj_log_p_b)  # log_z gets broadcast into a vector here
+    loss = huber(traj_diffs).mean()
+
+    connected_prop = mean_num_nodes = 0
+    for traj in jagged_trajs:
+        nodes, edges, _mask = traj[-2][0]
+        num_nodes = torch.sum(torch.sum(nodes, dim=1) > 0, dim=0)
+        num_edges = torch.sum(edges[:, :, 0], dim=(0, 1))
+        connected_prop += (num_edges == num_nodes**2) / len(jagged_trajs)
+        mean_num_nodes += num_nodes / len(jagged_trajs)
+
+    return loss, {"log_z": log_z.item(), "mean_log_reward": torch.mean(log_rewards).item(), "connected_prop": connected_prop.item(),
+                  "mean_num_nodes": mean_num_nodes.item(), "tb_loss": loss.detach()}
+
+@process_trajs
 def get_tb_loss_free(
         jagged_trajs, traj_lens, raw_embeddings, embedding_structure,
         actions, log_z, log_rewards,
@@ -386,8 +504,8 @@ def get_tb_loss_free(
         device="cuda"
     ):
 
-    fwd_action_probs = get_action_probs(*raw_embeddings, *embedding_structure, fwd_stop_model, fwd_node_model, fwd_edge_model, random_action_prob=0, apply_masks=True)
-    bck_action_probs = get_action_probs(*raw_embeddings, *embedding_structure, bck_stop_model, bck_node_model, bck_edge_model, random_action_prob=0, apply_masks=False)
+    fwd_action_probs = get_action_probs(*raw_embeddings[0], *embedding_structure[0], fwd_stop_model, fwd_node_model, fwd_edge_model, random_action_prob=0, apply_masks=True)
+    bck_action_probs = get_action_probs(*raw_embeddings[0], *embedding_structure[0], bck_stop_model, bck_node_model, bck_edge_model, random_action_prob=0, apply_masks=False)
 
     log_p_f = fwd_action_probs[list(range(len(fwd_action_probs))), actions]
     log_p_b = bck_action_probs[list(range(len(bck_action_probs))), torch.roll(actions, 1, 0)]  # prob of previous action
@@ -429,8 +547,8 @@ def get_tb_loss_maxent(
         device="cuda"
     ):
 
-    fwd_action_probs = get_action_probs(*raw_embeddings, *embedding_structure, fwd_stop_model, fwd_node_model, fwd_edge_model, random_action_prob=0, apply_masks=True)
-    bck_action_probs = get_action_probs(*raw_embeddings, *embedding_structure, bck_stop_model, bck_node_model, bck_edge_model, random_action_prob=0, apply_masks=False)
+    fwd_action_probs = get_action_probs(*raw_embeddings[0], *embedding_structure[0], fwd_stop_model, fwd_node_model, fwd_edge_model, random_action_prob=0, apply_masks=True)
+    bck_action_probs = get_action_probs(*raw_embeddings[0], *embedding_structure[0], bck_stop_model, bck_node_model, bck_edge_model, random_action_prob=0, apply_masks=False)
 
     log_p_f = fwd_action_probs[list(range(len(fwd_action_probs))), actions]
     log_p_b = bck_action_probs[list(range(len(bck_action_probs))), torch.roll(actions, 1, 0)]  # prob of previous action
@@ -448,7 +566,7 @@ def get_tb_loss_maxent(
     traj_log_p_f = scatter(log_p_f.to(device), batch_idx, dim=0, dim_size=traj_lens.shape[0], reduce="sum")
     traj_log_p_b = scatter(log_p_b.to(device), batch_idx, dim=0, dim_size=traj_lens.shape[0], reduce="sum")
 
-    traj_pred_l = n_model(raw_embeddings[2][embedding_structure[0]][final_graph_idxs - 1])
+    traj_pred_l = n_model(raw_embeddings[0][2][embedding_structure[0][0]][final_graph_idxs - 1])
     traj_pred_l[first_graph_idxs >= final_graph_idxs - 1] = 0
 
     n_loss = huber(traj_log_p_b + traj_pred_l).mean()
@@ -473,7 +591,7 @@ def get_tb_loss_maxent(
                   "mean_num_nodes": mean_num_nodes.item(), "tb_loss": tb_loss.detach(), "n_loss": n_loss.detach()}
 
 @process_trajs
-def get_tb_loss_rand_const(
+def _get_tb_loss_rand_const(
         jagged_trajs, traj_lens, raw_embeddings, embedding_structure,
         actions, log_z, log_rewards,
         stop_model, node_model, edge_model,
@@ -481,7 +599,7 @@ def get_tb_loss_rand_const(
         device="cuda"
     ):
 
-    action_probs = get_action_probs(*raw_embeddings, *embedding_structure, stop_model, node_model, edge_model, random_action_prob=0, apply_masks=True)
+    action_probs = get_action_probs(*raw_embeddings[0], *embedding_structure[0], stop_model, node_model, edge_model, random_action_prob=0, apply_masks=True)
 
     log_p_f = action_probs[list(range(len(action_probs))), actions]
     unnorm_p_b = torch.tensor([get_state_hash((tuple(s), a, seed)) % precision for traj in jagged_trajs for (s, _a), (_s, a) in zip(traj, [traj[-1]] + traj[:-1])])
@@ -516,29 +634,27 @@ def get_tb_loss_rand_const(
                   "mean_num_nodes": mean_num_nodes.item(), "tb_loss": loss.detach()}
 
 @process_trajs
-def get_tb_loss_rand_var(
+def get_tb_loss_rand(
         jagged_trajs, traj_lens, raw_embeddings, embedding_structure,
         actions, log_z, log_rewards,
         stop_model, node_model, edge_model,
-        mean=0.2, std=0.125, eps=0.01,
+        std=0.125, eps=0.01,
         device="cuda"
     ):
 
-    action_probs = get_action_probs(*raw_embeddings, *embedding_structure, stop_model, node_model, edge_model, random_action_prob=0, apply_masks=True)
+    action_probs = get_action_probs(*raw_embeddings[0], *embedding_structure[0], stop_model, node_model, edge_model, random_action_prob=0, apply_masks=True)
 
     log_p_f = action_probs[list(range(len(action_probs))), actions]
-    log_p_b = torch.normal(mean=mean, std=std, size=(action_probs.shape[0],))  # could compute traj_log_p_b directly if we don't want to try other distributions
-    log_p_b = torch.log(torch.clamp(log_p_b, min=eps, max=1))
 
     final_graph_idxs = torch.cumsum(traj_lens, 0) - 1
 
     # don't count padding states (kind of wasteful to compute these)
     log_p_f[final_graph_idxs] = 0
-    log_p_b[final_graph_idxs] = 0
 
     batch_idx = torch.arange(len(traj_lens), device=device).repeat_interleave(traj_lens)
     traj_log_p_f = scatter(log_p_f.to(device), batch_idx, dim=0, dim_size=traj_lens.shape[0], reduce="sum")
-    traj_log_p_b = scatter(log_p_b.to(device), batch_idx, dim=0, dim_size=traj_lens.shape[0], reduce="sum")
+    traj_log_p_b = torch.tensor([-sum([math.log(get_num_previous_acts(s)) for s, _a in t[1:]]) for t in jagged_trajs], device=device)
+    traj_log_p_b = torch.log(torch.clamp(torch.normal(mean=torch.exp(traj_log_p_b), std=std*(traj_lens-1), size=(action_probs.shape[0],)), min=eps, max=1))
 
     traj_log_p_b = traj_log_p_b.detach()  # probably not necessary
     log_rewards = log_rewards.to(device)
@@ -566,7 +682,7 @@ def get_tb_loss_const(
         device="cuda"
     ):
 
-    action_probs = get_action_probs(*raw_embeddings, *embedding_structure, stop_model, node_model, edge_model, random_action_prob=0, apply_masks=True)
+    action_probs = get_action_probs(*raw_embeddings[0], *embedding_structure[0], stop_model, node_model, edge_model, random_action_prob=0, apply_masks=True)
 
     log_p_f = action_probs[list(range(len(action_probs))), actions]
 
@@ -601,15 +717,15 @@ def get_tb_loss_aligned(
         jagged_trajs, traj_lens, raw_embeddings, embedding_structure,
         actions, log_z, log_rewards,
         stop_model, node_model, edge_model,
-        correct_val=0.9, incorrect_val=0.02, reward_arg=0.8,
+        correct_val=0.9, incorrect_val=0.02, reward_arg=0.8, reward_idx=1,
         device="cuda"
     ):  # aligns backward policy with handmade policy
 
-    action_probs = get_action_probs(*raw_embeddings, *embedding_structure, stop_model, node_model, edge_model, random_action_prob=0, apply_masks=True)
+    action_probs = get_action_probs(*raw_embeddings[0], *embedding_structure[0], stop_model, node_model, edge_model, random_action_prob=0, apply_masks=True)
 
     log_p_f = action_probs[list(range(len(action_probs))), actions]
     log_p_b = torch.tensor([
-        get_aligned_action_log_prob(*s, a, b=reward_arg, correct_log_prob=math.log(correct_val), incorrect_log_prob=math.log(incorrect_val)) for traj in jagged_trajs for s, a in traj
+        get_aligned_action_log_prob(*s, a, reward_idx=reward_idx, reward_arg=reward_arg, correct_log_prob=math.log(correct_val), incorrect_log_prob=math.log(incorrect_val)) for traj in jagged_trajs for s, a in traj
     ])
 
     final_graph_idxs = torch.cumsum(traj_lens, 0) - 1
@@ -640,44 +756,33 @@ def get_tb_loss_aligned(
                   "mean_num_nodes": mean_num_nodes.item(), "tb_loss": loss.detach()}
 
 @process_trajs
-def get_tb_loss_adjusted_uniform(
+def get_tb_loss_loss_aligned(
         jagged_trajs, traj_lens, raw_embeddings, embedding_structure,
         actions, log_z, log_rewards,
         stop_model, node_model, edge_model,
-        reward_arg=0.8,
-        device="cuda"
-    ):  # adjusts uniform backward policy with difference between correct and current forward policies
+        iters=5, std_mult=0.5, eps=0.01, device="cuda"
+    ):
 
-    action_probs = get_action_probs(*raw_embeddings, *embedding_structure, stop_model, node_model, edge_model, random_action_prob=0, apply_masks=True)
+    action_probs = get_action_probs(*raw_embeddings[0], *embedding_structure[0], stop_model, node_model, edge_model, random_action_prob=0, apply_masks=True)
 
     log_p_f = action_probs[list(range(len(action_probs))), actions]
     log_p_f[torch.cumsum(traj_lens, 0) - 1] = 0  # don't count padding states (kind of wasteful to compute these)
 
     batch_idx = torch.arange(len(traj_lens), device=device).repeat_interleave(traj_lens)
     traj_log_p_f = scatter(log_p_f.to(device), batch_idx, dim=0, dim_size=traj_lens.shape[0], reduce="sum")
-
-    trajs = [action for traj in jagged_trajs for action in traj]
-    adjustments = torch.tensor([get_prob_change(*s, a, p, b=reward_arg) for (s, a), p in zip(trajs, log_p_f)], device=device)
-
-    z = torch.exp(log_z)
-    weights = torch.tensor([(r / z) ** 1/n for r, n in zip(torch.exp(log_rewards), traj_lens)], device=device).repeat_interleave(traj_lens)
-
-    p_b_adjustments = weights * adjustments
-    p_b_uniform = torch.roll(1 / torch.tensor([get_num_previous_acts(s) for s, _a in trajs], device=device), -1, 0)
-
-    log_p_b = torch.log(p_b_adjustments + p_b_uniform).detach()  # detach probably not necessary here
-    log_p_b[torch.cumsum(traj_lens, 0) - 1] = 0
-    traj_log_p_b = scatter(log_p_b.to(device), batch_idx, dim=0, dim_size=traj_lens.shape[0], reduce="sum")
+    uniform_traj_log_p_b = torch.tensor([-sum([math.log(get_num_previous_acts(s)) for s, _a in t[1:]]) for t in jagged_trajs], device=device)
 
     log_rewards = log_rewards.to(device)
 
+    traj_log_p_b = torch.tensor(uniform_traj_log_p_b)
+
+    for _ in range(iters):  # pray it converges
+
+        inv_loss = 1 / huber((log_z + traj_log_p_f) - (log_rewards + traj_log_p_b))  # log_z gets broadcast into a vector here
+        traj_log_p_b = (torch.log(torch.clamp(((inv_loss - inv_loss.mean()) / inv_loss.std() * std_mult + 1), min=eps, max=1)) + uniform_traj_log_p_b).detach()
+
     traj_diffs = (log_z + traj_log_p_f) - (log_rewards + traj_log_p_b)  # log_z gets broadcast into a vector here
     loss = huber(traj_diffs).mean()
-
-    mask = torch.ones((p_b_adjustments.shape), dtype=bool)
-    mask[torch.cumsum(traj_lens, 0) - 1] = False
-    mean_adjustment = torch.mean(p_b_adjustments[mask])
-    mean_uniform_prob = torch.mean(p_b_uniform[mask])
 
     connected_prop = mean_num_nodes = 0
     for traj in jagged_trajs:
@@ -688,8 +793,8 @@ def get_tb_loss_adjusted_uniform(
         mean_num_nodes += num_nodes / len(jagged_trajs)
 
     return loss, {"log_z": log_z.item(), "mean_log_reward": torch.mean(log_rewards).item(), "connected_prop": connected_prop.item(),
-                  "mean_num_nodes": mean_num_nodes.item(), "mean_uniform_prob": mean_uniform_prob, "mean_adjustment": mean_adjustment,
-                  "tb_loss": loss.detach()}
+                  "mean_num_nodes": mean_num_nodes.item(), "tb_loss": loss.detach()}
+
 
 
 @torch.no_grad()

@@ -143,12 +143,16 @@ class GFNSampler(IterableDataset):
 
         return trajs, log_rewards
 
-    def get_sampled(self):
+    def get_sampled(self, num=None, test=False):
 
-        self.base_model.eval(), self.stop_model.eval(), self.node_model.eval(), self.edge_model.eval()
+        if not test:
+            self.base_model.eval(), self.stop_model.eval(), self.node_model.eval(), self.edge_model.eval()
 
-        num_to_gen = max(self.replay_buffer_growth, self.batch_size - self.replay_end if not self.replay_saturated else 0)
-        sample_size = num_to_gen - self.num_precomputed
+        if num is not None:
+            sample_size = num
+        else:
+            num_to_gen = max(self.replay_buffer_growth, self.batch_size - self.replay_end if not self.replay_saturated else 0)
+            sample_size = num_to_gen - self.num_precomputed
 
         trajs = [[] for __ in range(sample_size)]
 
@@ -180,7 +184,7 @@ class GFNSampler(IterableDataset):
                 self.stop_model,
                 self.node_model,
                 self.edge_model, 
-                random_action_prob=self.random_action_prob,
+                random_action_prob=self.random_action_prob * (1-test),
                 adjust_random=self.adjust_random,
                 apply_masks=True,
                 max_nodes=self.max_nodes,
