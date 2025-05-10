@@ -10,6 +10,7 @@ python src/graph_building/main.py --loss-fn tb-tlm --reward-idx 1 --depth 2 --nu
 #cp -r results results_4
 python src/graph_building/main.py --loss-fn tb-uniform --reward-idx 0 --depth 2 --num-features 8 --learning-rate 0.0001
 
+# 0. test new pb converges
 # 1. test all 3 tasks and all backward policies (implement kl divergence and check vals; importance sample trajs; check diverse + mean log reward >= 2.8 + <0.01 js); test uniform works (to <0.001 js)
 # 2. run all backward policies
 # 3. produce a surface from some of the points and a path over the surface from some of the others
