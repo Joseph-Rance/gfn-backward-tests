@@ -32,7 +32,7 @@ def get_embeddings(base_model, nodes, edges, masks, device="cuda"):
 
     return (node_embeddings, edge_embeddings, mean_embedding), (inverse_indices, unique_masks, unique_edges[:, :, :, 0] == 1)
 
-def get_action_probs(  # TODO: surely this should be on GPU!
+def get_action_probs(
         node_embeddings, edge_embeddings, global_embedding,
         inverse_indices, unique_masks, unique_edges,
         stop_model, node_model, edge_model,
@@ -118,7 +118,7 @@ def process_trajs(get_loss_fn):
         actions = adjust_action_idxs(torch.tensor([a for _s, a in trajs]), pre_padding_lens, post_padding_len)
 
         embeddings = get_embeddings(base_model, nodes, edges, masks, device=device)
-        log_z = constant_log_z if constant_log_z is not None else log_z_model(torch.tensor([[1.]], device=device))
+        log_z = torch.tensor(constant_log_z) if constant_log_z is not None else log_z_model(torch.tensor([[1.]], device=device))
 
         return get_loss_fn(jagged_trajs, traj_lens, *embeddings, actions, log_z, log_rewards, *model_heads, device=device, **kwargs)
 
@@ -273,7 +273,6 @@ def get_tb_loss_tlm(
         connected_prop += (num_edges == num_nodes**2) / len(jagged_trajs)
         mean_num_nodes += num_nodes / len(jagged_trajs)
 
-    # TODO: when log_z is passed directly we can't call item() (for every metrics output)
     return loss, {"log_z": log_z.item(), "mean_log_reward": torch.mean(log_rewards).item(), "connected_prop": connected_prop.item(),
                   "mean_num_nodes": mean_num_nodes.item(), "tb_loss": tb_loss.detach(), "back_loss": back_loss.detach()}
 
@@ -602,7 +601,7 @@ def get_tb_loss_aligned(
         jagged_trajs, traj_lens, raw_embeddings, embedding_structure,
         actions, log_z, log_rewards,
         stop_model, node_model, edge_model,
-        correct_val=0.9, incorrect_val=0.02, base=0.8,
+        correct_val=0.9, incorrect_val=0.02, reward_arg=0.8,
         device="cuda"
     ):  # aligns backward policy with handmade policy
 
@@ -610,7 +609,7 @@ def get_tb_loss_aligned(
 
     log_p_f = action_probs[list(range(len(action_probs))), actions]
     log_p_b = torch.tensor([
-        get_aligned_action_log_prob(*s, a, b=base, correct_log_prob=math.log(correct_val), incorrect_log_prob=math.log(incorrect_val)) for traj in jagged_trajs for s, a in traj
+        get_aligned_action_log_prob(*s, a, b=reward_arg, correct_log_prob=math.log(correct_val), incorrect_log_prob=math.log(incorrect_val)) for traj in jagged_trajs for s, a in traj
     ])
 
     final_graph_idxs = torch.cumsum(traj_lens, 0) - 1
@@ -645,7 +644,7 @@ def get_tb_loss_adjusted_uniform(
         jagged_trajs, traj_lens, raw_embeddings, embedding_structure,
         actions, log_z, log_rewards,
         stop_model, node_model, edge_model,
-        base=0.8,
+        reward_arg=0.8,
         device="cuda"
     ):  # adjusts uniform backward policy with difference between correct and current forward policies
 
@@ -658,7 +657,7 @@ def get_tb_loss_adjusted_uniform(
     traj_log_p_f = scatter(log_p_f.to(device), batch_idx, dim=0, dim_size=traj_lens.shape[0], reduce="sum")
 
     trajs = [action for traj in jagged_trajs for action in traj]
-    adjustments = torch.tensor([get_prob_change(*s, a, p, b=base) for (s, a), p in zip(trajs, log_p_f)], device=device)
+    adjustments = torch.tensor([get_prob_change(*s, a, p, b=reward_arg) for (s, a), p in zip(trajs, log_p_f)], device=device)
 
     z = torch.exp(log_z)
     weights = torch.tensor([(r / z) ** 1/n for r, n in zip(torch.exp(log_rewards), traj_lens)], device=device).repeat_interleave(traj_lens)
@@ -716,7 +715,7 @@ def get_action_log_probs_test_helper(nodes, edges, masks, loss_fn, base_model, f
         uniform_log_p_b = torch.tensor([[-math.log(get_num_previous_acts(s))] * (s[0].shape[0]**2 + 2) for s in zip(nodes, edges, masks, strict=True)])
         bck_action_probs = (1-loss_arg_a) * tlm_log_p_b + (loss_arg_a) * uniform_log_p_b
     else:
-        bck_action_probs = None  # TODO: jank
+        bck_action_probs = None
         #raise ValueError(f"embedding for loss function {loss_fn} is not supported")
     
     return fwd_action_probs, bck_action_probs

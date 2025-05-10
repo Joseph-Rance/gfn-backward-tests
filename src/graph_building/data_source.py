@@ -8,21 +8,12 @@ from torch.utils.data import IterableDataset
 from gfn import get_embeddings, get_action_probs
 
 
-def get_smoothed_log_reward(nodes, edges, base=0.8, alpha=10, **kwargs):
+def get_smoothed_log_overfit_reward(nodes, edges, reward_arg=0.8, alpha=10, **kwargs):
     num_nodes = torch.sum(torch.sum(nodes, dim=2) > 0, dim=1)
     num_edges = torch.sum(edges[:, :, :, 0], dim=(1, 2))
     #return torch.logical_and(num_nodes == 2, num_edges == 0).long()  # (for testing)
     fully_connectedness = (num_edges - num_nodes**2) ** 2
-    return torch.clamp(math.log(base) * num_nodes - alpha * fully_connectedness, min=-1_000)
-
-def get_uncertain_smoothed_log_reward(nodes, edges, base=0.8, alpha=10, base_std=0.1, added_std_nodes=[0, 2, 4, 6, 8, 10], added_std=0.1, eta=0.001, **kwargs):
-    num_nodes = torch.sum(torch.sum(nodes, dim=2) > 0, dim=1)
-    num_edges = torch.sum(edges[:, :, :, 0], dim=(1, 2))
-    #return torch.logical_and(num_nodes == 2, num_edges == 0).long()  # (for testing)
-    fully_connectedness = (num_edges - num_nodes**2) ** 2
-    noise_std = base_std + (added_std if num_nodes in added_std_nodes else 0)
-    noise = torch.normal(mean=0, std=noise_std, size=(num_nodes.shape,))
-    return torch.clamp(math.log(max(base ** num_nodes + noise, eta)) - alpha * fully_connectedness, min=-1_000)
+    return torch.clamp(math.log(reward_arg) * num_nodes - alpha * fully_connectedness, min=-1_000)
 
 def get_uniform_counting_log_reward(nodes, _edges, **kwargs):  # this is like counting from that other paper but reversed for efficiency
     num_nodes = torch.sum(torch.sum(nodes, dim=2) > 0, dim=1)
@@ -41,10 +32,10 @@ def get_cliques_log_reward(nodes, edges, n=3, m=10, eta=0.00001, **kwargs):  # r
         log_rewards.append(math.log(reward))
     return torch.tensor(log_rewards)
 
-def get_reward_fn_generator(reward_fn, base=0.8, alpha_start=1_000_000, alpha_change=1):
+def get_reward_fn_generator(reward_fn, reward_arg=0.8, alpha_start=1_000_000, alpha_change=1):
     alpha = alpha_start
     while True:
-        yield lambda *args, **kwargs: reward_fn(*args, base=base, alpha=alpha, **kwargs)
+        yield lambda *args, **kwargs: reward_fn(*args, reward_arg=reward_arg, alpha=alpha, **kwargs)
         alpha *= alpha_change  # it is probably a bad idea to actually have alpha_change != 1 as log(z) would keep changing
         alpha = min(alpha, 1_000_000)
 
@@ -65,16 +56,17 @@ class GFNSampler(IterableDataset):
         max_len=500,
         max_nodes=10,
         batch_size=128,
-        num_precomputed=64,
+        num_precomputed=0,
         edges_first=False,
         max_precomputed_len=4,
-        base=0.8,
+        reward_arg=0.8,
         undirected=False,
         node_history_bounds=(0, 1),  # inclusive
         edge_history_bounds=(0, 1),  # inclusive
         masked_action_value=-80,
         action_prob_clip_bounds=(-75, 75),  # inclusive
         replay_buffer_length=1024,
+        replay_buffer_growth=128,
         start_size=4,
         expand_factor=2,
         device="cuda"
@@ -93,16 +85,17 @@ class GFNSampler(IterableDataset):
         self.max_len = max_len
         self.max_nodes = max_nodes
         self.batch_size = batch_size
-        self.num_precomputed = num_precomputed
+        self.num_precomputed = num_precomputed  # precomputed only works with the overfitted reward
         self.edges_first = edges_first
         self.max_precomputed_len = max_precomputed_len
-        self.base = base
-        self.undirected = undirected  # TODO: make this work with precomputed?
+        self.reward_arg = reward_arg
+        self.undirected = undirected  # this works terribly for some reason
         self.node_history_bounds = node_history_bounds
         self.edge_history_bounds = edge_history_bounds
         self.masked_action_value = masked_action_value
         self.action_prob_clip_bounds = action_prob_clip_bounds
         self.replay_buffer_length = replay_buffer_length
+        self.replay_buffer_growth = replay_buffer_growth
         self.start_size = start_size
         self.expand_factor = expand_factor
         self.device = device
@@ -138,7 +131,7 @@ class GFNSampler(IterableDataset):
                     self.replay_end = 0
 
             max_idx = self.replay_buffer_length if self.replay_saturated else self.replay_end
-            idxs = torch.randint(0, max_idx, (len(sampled_trajs),))
+            idxs = torch.randint(0, max_idx, (self.batch_size - self.num_precomputed,))
 
             trajs += self.replay_buffer_trajs[idxs].tolist()
             log_rewards = torch.concatenate((log_rewards, self.replay_buffer_log_rewards[idxs]))
@@ -154,7 +147,8 @@ class GFNSampler(IterableDataset):
 
         self.base_model.eval(), self.stop_model.eval(), self.node_model.eval(), self.edge_model.eval()
 
-        sample_size = self.batch_size - self.num_precomputed
+        num_to_gen = max(self.replay_buffer_growth, self.batch_size - self.replay_end if not self.replay_saturated else 0)
+        sample_size = num_to_gen - self.num_precomputed
 
         trajs = [[] for __ in range(sample_size)]
 
@@ -274,7 +268,7 @@ class GFNSampler(IterableDataset):
         trajs = []
 
         if importance_sample:
-            p_base = 1 - (1-self.base / base_multiplier)
+            p_base = 1 - (1-self.reward_arg / base_multiplier)
             manual_graphs = torch.rand((self.num_precomputed,), device="cpu")
             num_nodes = torch.zeros((self.num_precomputed,), device="cpu")
 
@@ -293,7 +287,7 @@ class GFNSampler(IterableDataset):
         for n in num_nodes:
             trajs.append(self.get_all_precomputed()[int(n)-1])
 
-        log_rewards = math.log(self.base) * num_nodes
+        log_rewards = math.log(self.reward_arg) * num_nodes
 
         #log_rewards = torch.tensor([0] * len(num_nodes))  # (for testing)
 

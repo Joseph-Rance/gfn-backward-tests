@@ -26,10 +26,7 @@ def brute_force(g, counts, rewards, remaining_edges, n, e):
 
 all_counts, all_rewards = [], []
 
-for n in range(1, 9):
-
-    if n == 8:  # TODO: run for 8 (est ~10 hrs?)
-        continue
+for n in range(1, 8):
 
     start = time.perf_counter()
 

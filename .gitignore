@@ -1,4 +1,6 @@
-results/*
+src/drug_design/data/building_blocks/*.sdf
+src/drug_design/data/building_blocks/*.txt
+src/drug_design/data/building_blocks/*.pkl
 results*
 *.pyc
 *.pyo

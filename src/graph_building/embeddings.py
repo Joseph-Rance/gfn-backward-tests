@@ -134,7 +134,7 @@ if args.process_data:
     data = np.stack((fwd_vals, bck_vals, losses, colours))
     np.save(f"{args.results_dir}/s/processed_data.npy", data)
 
-if args.show_graph or args.save_graph:  # TODO: we want to produce a surface from some of the points and a path over the surface from some of the others
+if args.show_graph or args.save_graph:
 
     if not args.process_data:
         fwd_vals, bck_vals, losses, colours = np.load(f"{args.results_dir}/s/processed_data.npy")
