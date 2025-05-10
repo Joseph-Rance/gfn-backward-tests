@@ -39,19 +39,18 @@ parser = argparse.ArgumentParser()
 parser.add_argument("-s", "--seed", type=int, default=1)
 parser.add_argument("-d", "--device", type=str, default="cuda", help="generally 'cuda' or 'cpu'")
 parser.add_argument("-o", "--save", action="store_true", default=False, help="whether to save outputs to a file")
-parser.add_argument("-x", "--test-template", action="store_true", default=False, help="whether to record P_B and P_F embeddings and loss using the results/s/template.npy")
-parser.add_argument("-c", "--cycle-len", type=int, default=5, help="how often to log/checkpoint (number of batches)")
+parser.add_argument("-c", "--cycle-len", type=int, default=100, help="how often to log/checkpoint (number of batches)")
 parser.add_argument("-t", "--num-test-graphs", type=int, default=64, help="number of graphs to generate for estimating metrics")
 
 # env
 parser.add_argument("-b", "--base", type=float, default=0.8, help="base for exponent used in reward calculation")  # TODO: generalise to other rewards
-parser.add_argument("-r", "--reward-idx", type=int, default=0, help="index of reward function to use")
+parser.add_argument("-r", "--reward-idx", type=int, default=2, help="index of reward function to use")
 
 # model
 parser.add_argument("-f", "--num-features", type=int, default=10, help="number of features used to represent each node/edge (min 2)")
-parser.add_argument("-y", "--depth", type=int, default=1, help="depth of the transformer model")
-parser.add_argument("-g", "--max-nodes", type=int, default=8, help="maximum number of nodes in a generated graph")
-parser.add_argument("-k", "--max-len", type=int, default=80, help="maximum number of actions per trajectory")
+parser.add_argument("-y", "--depth", type=int, default=2, help="depth of the transformer model")
+parser.add_argument("-g", "--max-nodes", type=int, default=10, help="maximum number of nodes in a generated graph")
+parser.add_argument("-k", "--max-len", type=int, default=110, help="maximum number of actions per trajectory")
 parser.add_argument("-q", "--random-action-template", type=int, default=2, help="index of the random action config to use (see code)")
 parser.add_argument("-z", "--log-z", type=float, default=None, help="constant value of log(z) to use (learnt if None)")
 parser.add_argument("-i", "--backward_init", type=str, default="random", help="how to initialise the backward policy")
@@ -64,9 +63,9 @@ parser.add_argument("-w", "--loss-arg-c", type=float, default=1)
 parser.add_argument("-m", "--batch-size", type=int, default=32)
 parser.add_argument("-p", "--num-precomputed", type=int, default=0, help="number of trajectories from precomputed, fully connected graphs")
 parser.add_argument("-j", "--edges-first", action="store_true", default=False, help="whether to add edges before nodes in precomputed trajectories")
-parser.add_argument("-a", "--learning-rate", type=float, default=0.0001)
+parser.add_argument("-a", "--learning-rate", type=float, default=0.0005)
 parser.add_argument("-n", "--max-update-norm", type=float, default=99.9)
-parser.add_argument("-e", "--num-batches", type=int, default=5_000)
+parser.add_argument("-e", "--num-batches", type=int, default=10_000)
 
 args = parser.parse_args()
 
@@ -129,7 +128,7 @@ configs = {
 get_loss, config = configs[args.loss_fn]
 parameterise_backward = config["parameterise_backward"]
 
-reward_fns = [get_smoothed_log_reward, get_uncertain_smoothed_log_reward, get_uniform_counting_log_reward, get_cliques_log_reward]
+reward_fns = [get_smoothed_log_reward, get_uniform_counting_log_reward, get_cliques_log_reward]
 reward_fn = reward_fns[args.reward_idx]
 
 #compile_model = lambxa x: torch.compile(x)
@@ -185,20 +184,20 @@ log_z_model = compile_model(nn.Linear(1, 1, bias=False)).to(args.device)
 
 random_configs = [(0, 0, 0),
                   (0.5, 0, 0.5),
-                  (1, 0.99, 0.1)]
+                  (0.8, 0.99, 0.15)]
 random_prob, random_prob_decay, random_prob_min = random_configs[args.random_action_template]
 
-main_optimiser = torch.optim.Adam(base_model.parameters(), lr=args.learning_rate, weight_decay=1e-4)
-fwd_optimiser = torch.optim.Adam(itertools.chain(*(i.parameters() for i in fwd_models)), lr=args.learning_rate, weight_decay=1e-4)
-log_z_optimiser = torch.optim.Adam(log_z_model.parameters(), lr=args.learning_rate, weight_decay=1e-4)
+main_optimiser = torch.optim.Adam(base_model.parameters(), lr=args.learning_rate, weight_decay=1e-6)
+fwd_optimiser = torch.optim.Adam(itertools.chain(*(i.parameters() for i in fwd_models)), lr=args.learning_rate, weight_decay=1e-6)
+log_z_optimiser = torch.optim.Adam(log_z_model.parameters(), lr=args.learning_rate, weight_decay=1e-6)
 
-main_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(main_optimiser, T_max=args.num_batches)
-fwd_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(fwd_optimiser, T_max=args.num_batches)
-log_z_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(log_z_optimiser, T_max=args.num_batches)
+#main_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(main_optimiser, patience=5_000)
+#fwd_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(fwd_optimiser, patience=5_000)
+#log_z_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(log_z_optimiser, patience=5_000)
 
 if parameterise_backward:
     bck_optimiser = torch.optim.Adam(itertools.chain(*(i.parameters() for i in bck_models)), lr=args.learning_rate*10, weight_decay=1e-4)
-    bck_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(bck_optimiser, T_max=args.num_batches)
+    bck_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(bck_optimiser, patience=1_000)
 
     # (in case we pretrained the backward policy)
     main_optimiser.zero_grad()
@@ -241,14 +240,16 @@ if __name__ == "__main__":
         log_z_optimiser.step()
         log_z_optimiser.zero_grad()
 
-        main_scheduler.step()
-        fwd_scheduler.step()
-        log_z_scheduler.step()
+        #if it > 5_000:  # TODO: temp for reduce on plateau
+        #    main_scheduler.step(loss.item())
+        #    fwd_scheduler.step(loss.item())
+        #    log_z_scheduler.step(loss.item())
 
         if parameterise_backward:
             bck_optimiser.step()
             bck_optimiser.zero_grad()
-            bck_scheduler.step()
+            #if it > 5_000:  # TODO: temp for reduce on plateau
+            #    bck_scheduler.step(loss.item())
 
         sum_loss += loss.detach() / args.cycle_len
         mean_log_reward += metrics["mean_log_reward"] / args.cycle_len
@@ -264,7 +265,7 @@ if __name__ == "__main__":
 
         with torch.no_grad():
 
-            if (it+1) % 5 == 0:
+            if (it+1) % 50 == 0:
                 data_source.random_action_prob = max(random_prob_min, data_source.random_action_prob * random_prob_decay)
 
             for m in (base_model, log_z_model, *fwd_models, *bck_models):
@@ -301,16 +302,16 @@ if __name__ == "__main__":
 
                 # assume that samples are uniformly generated in these buckets (questionalble)
                 # does this make it a lower bound?
-                gen_distribution = np.array([0 for __ in range(1, 9) for c in ["d", "c"]], dtype=float)
+                gen_distribution = np.array([0 for __ in range(1, 10) for c in ["d", "c"]], dtype=float)
                 for n, c in zip(test_node_counts, test_connectivities):
                     gen_distribution[2*(n-1) + c] += 1
                 gen_distribution /= len(test_connectivities)
 
                 if args.reward_idx == 2:  # TODO: update for new task
-                    tru_distribution = np.array([v for n in range(1, 9) for v in [(1 - 2 ** (- n ** 2)) / 8, (2 ** (- n ** 2)) / 8]])
+                    tru_distribution = np.array([v for n in range(1, 10) for v in [(1 - 2 ** (- n ** 2)) / 8, (2 ** (- n ** 2)) / 8]])
                 else:
                     s = args.base*(1-args.base**8)/(1-args.base)
-                    tru_distribution = np.array([v for n in range(1, 9) for v in [0, (args.base ** n)/s]])
+                    tru_distribution = np.array([v for n in range(1, 10) for v in [0, (args.base ** n)/s]])
 
                 eta = 0.001
                 # https://en.wikipedia.org/wiki/Kolmogorov%E2%80%93Smirnov_test
@@ -325,9 +326,10 @@ if __name__ == "__main__":
                 print(
                     f"{it: <5} loss: {sum_loss.item():7.2f}" \
                       + (f" (fwd: {sum_loss_fwd.item():7.2f}, bck: {sum_loss_bck.item():7.2f})" if parameterise_backward else "") + \
-                    f"; norm: {norm:6.3f}; " \
+                    f"; norm: {norm:6.3f}; lr: {main_optimiser.param_groups[0]['lr']:7.5f}; " \
                     f"log(z): {metrics['log_z']:6.3f}; " \
                     f"mean log reward: {test_mean_log_reward:8.3f} ({mean_log_reward:8.3f}); " \
+                    f"randomness: {data_source.random_action_prob:5.3f}; "
                     f"connected: {test_mean_connected_prop:4.2f} ({mean_connected_prop:4.2f}); " \
                     f"ens_0: [{', '.join([f'{i.item():6.2f}' for i in ens_0])}]; " \
                     f"ens_1: [{', '.join([f'{i.item():6.2f}' for i in ens_1[1:]])}]; " \
@@ -335,7 +337,7 @@ if __name__ == "__main__":
                     f"ks: {ks:8.5f}; kl: {kl:8.5f}; js: {js:8.5f}"  # TODO: what the hell
                 )
 
-                if args.test_template:  # TODO: temp (integrate this in with normal running)
+                if False:  # TODO: temp (integrate this in with normal running)
 
                     total_loss = 0
                     for i in range(8):  # TODO: set to 32 for 3d plot sweep
@@ -378,7 +380,7 @@ if __name__ == "__main__":
                             sum_loss_fwd.item(),
                             sum_loss_bck.item()
                         ] if parameterise_backward else []),
-                        norm,
+                        norm, main_optimiser.param_groups[0]['lr'],
                         metrics["log_z"],
                         test_mean_log_reward,
                         mean_log_reward,
