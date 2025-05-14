@@ -390,13 +390,16 @@ if __name__ == "__main__":
                     with open(f"results/batches/{it}.pkl", "wb") as f:
                         pickle.dump((trajs, log_rewards), f, pickle.HIGHEST_PROTOCOL)
 
+                    with open(f"results/batches/{it}_dist.pkl", "wb") as f:
+                        pickle.dump(gen_distribution, f, pickle.HIGHEST_PROTOCOL)
+
                     np.save(f"results/embeddings/{it}_fwd.npy", np.concatenate(fwd_embs, axis=0))
                     np.save(f"results/embeddings/{it}_bck.npy", np.concatenate(bck_embs, axis=0))
 
                     names = ("stop_model", "node_model", "edge_model")
                     for m, f in zip([base_models[0], *fwd_models, *bck_models, log_z_model],
                                     ["base_model", *("fwd_" + n for n in names), *("bck_" + n for n in names),
-                                     *(("n_model", "log_z_model") if args.loss_fn == "tb-max-ent" else ("log_z_model", ))]):
+                                     *(("n_model", "log_z_model") if args.loss_fn == "tb-max-ent" else ("log_z_model",))]):
                         torch.save(m.state_dict(), f"results/models/{it}_{f}.pt")
 
                 print(f"{metrics['iteration']:<5}: ({metrics['lr']:5.0e}; {metrics['random_prob']:5.2f}) " \
