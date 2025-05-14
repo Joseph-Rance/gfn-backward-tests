@@ -8,18 +8,18 @@ from torch.utils.data import IterableDataset
 from gfn import get_embeddings, get_action_probs
 
 
-def get_smoothed_log_overfit_reward(nodes, edges, reward_arg=0.8, alpha=10, **kwargs):
+def get_uniform_counting_log_reward(nodes, _edges, **kwargs):  # this is like counting from that other paper but reversed for efficiency
+    num_nodes = torch.sum(torch.sum(nodes, dim=2) > 0, dim=1)
+    return torch.clamp(- math.log(2) * num_nodes ** 2, max=1_000, min=-1_000)
+
+def get_smoothed_overfit_log_reward(nodes, edges, reward_arg=0.8, alpha=10, **kwargs):
     num_nodes = torch.sum(torch.sum(nodes, dim=2) > 0, dim=1)
     num_edges = torch.sum(edges[:, :, :, 0], dim=(1, 2))
     #return torch.logical_and(num_nodes == 2, num_edges == 0).long()  # (for testing)
     fully_connectedness = (num_edges - num_nodes**2) ** 2
     return torch.clamp(math.log(reward_arg) * num_nodes - alpha * fully_connectedness, min=-1_000)
 
-def get_uniform_counting_log_reward(nodes, _edges, **kwargs):  # this is like counting from that other paper but reversed for efficiency
-    num_nodes = torch.sum(torch.sum(nodes, dim=2) > 0, dim=1)
-    return torch.clamp(- math.log(2) * num_nodes ** 2, max=1_000, min=-1_000)
-
-def get_cliques_log_reward(nodes, edges, reward_arg=3, m=10, eta=0.00001, **kwargs):  # reward is ReLU( m * # nodes in exactly 1 n-clique - # edges )
+def get_cliques_log_reward(nodes, edges, reward_arg=3, m=10, eta=0, **kwargs):  # reward is ReLU( m * # nodes in exactly 1 n-clique - # edges )
     num_nodes = torch.sum(torch.sum(nodes, dim=2) > 0, dim=1)
     num_edges = torch.sum(edges[:, :, :, 0], dim=(1, 2))
     log_rewards = []
@@ -29,6 +29,7 @@ def get_cliques_log_reward(nodes, edges, reward_arg=3, m=10, eta=0.00001, **kwar
         n_cliques = [c for c in nx.algorithms.clique.find_cliques(g) if len(c) == reward_arg]
         n_cliques_per_node = np.bincount(sum(n_cliques, []), minlength=num_nodes[i])
         reward = max(np.sum(n_cliques_per_node == 1) * m - num_edges[i], eta)
+        reward *= 1e10 / 300**num_nodes[i]
         log_rewards.append(math.log(reward))
     return torch.tensor(log_rewards)
 
@@ -38,6 +39,34 @@ def get_reward_fn_generator(reward_fn, reward_arg=0.8, alpha_start=1_000_000, al
         yield lambda *args, **kwargs: reward_fn(*args, reward_arg=reward_arg, alpha=alpha, **kwargs)
         alpha *= alpha_change  # it is probably a bad idea to actually have alpha_change != 1 as log(z) would keep changing
         alpha = min(alpha, 1_000_000)
+
+
+uniform_true_dist = np.array([[[0, 0],             [0, 0],      [0, 0],      [0, 0],             [0, 0],       [0, 0],       [0, 0],       [0, 0], [0, 0]],
+                              [[0.07143, 0.07143], [0, 0],      [0, 0],      [0, 0],             [0, 0],       [0, 0],       [0, 0],       [0, 0], [0, 0]],
+                              [[0.13393, 0.00893], [0, 0],      [0, 0],      [0, 0],             [0, 0],       [0, 0],       [0, 0],       [0, 0], [0, 0]],
+                              [[0.08259, 0],       [0, 0],      [0, 0],      [0.05999, 0.00028], [0, 0],       [0, 0],       [0, 0],       [0, 0], [0, 0]],
+                              [[0.05434, 0],       [0, 0],      [0.05085, 0],[0.03767, 0],       [0, 0],       [0, 0],       [0, 0],       [0, 0], [0, 0]],
+                              [[0.06011, 0],       [0.02682, 0],[0.03973, 0],[0.01471, 0],       [0.00149, 0], [0, 0],       [0, 0],       [0, 0], [0, 0]],
+                              [[0.08649, 0],       [0.03080, 0],[0.01941, 0],[0.00517, 0],       [0.00065, 0], [0, 0],       [0.00034, 0], [0, 0], [0, 0]],
+                              [[0.10979, 0],       [0.02422, 0],[0.00673, 0],[0.00176, 0],       [0.00021, 0], [0.00010, 0], [0.00005, 0], [0, 0], [0, 0]]])
+
+overfit_true_dist = np.array([[[0, 0],       [0, 0], [0, 0], [0, 0],       [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+                              [[0, 0.25307], [0, 0], [0, 0], [0, 0],       [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+                              [[0, 0.20246], [0, 0], [0, 0], [0, 0],       [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+                              [[0, 0],       [0, 0], [0, 0], [0, 0.16197], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+                              [[0, 0.12957], [0, 0], [0, 0], [0, 0],       [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+                              [[0, 0.10366], [0, 0], [0, 0], [0, 0],       [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+                              [[0, 0.08293], [0, 0], [0, 0], [0, 0],       [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]],
+                              [[0, 0.06634], [0, 0], [0, 0], [0, 0],       [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]]])
+
+cliques_true_dist = np.array([[[0, 0], [0, 0],       [0, 0],       [0, 0],             [0, 0],       [0, 0],       [0, 0],       [0, 0], [0, 0]],
+                              [[0, 0], [0, 0],       [0, 0],       [0, 0],             [0, 0],       [0, 0],       [0, 0],       [0, 0], [0, 0]],
+                              [[0, 0], [0, 0],       [0, 0],       [0, 0],             [0, 0],       [0, 0],       [0, 0],       [0, 0], [0, 0]],
+                              [[0, 0], [0, 0],       [0, 0],       [0.09136, 0.00042], [0, 0],       [0, 0],       [0, 0],       [0, 0], [0, 0]],
+                              [[0, 0], [0, 0],       [0.01836, 0], [0.02366, 0],       [0, 0],       [0, 0],       [0, 0],       [0, 0], [0, 0]],
+                              [[0, 0], [0.00220, 0], [0.02178, 0], [0.01465, 0],       [0.00208, 0], [0, 0],       [0, 0],       [0, 0], [0, 0]],
+                              [[0, 0], [0.00075, 0], [0.05812, 0], [0.03126, 0],       [0.00587, 0], [0, 0],       [0.00494, 0], [0, 0], [0, 0]],
+                              [[0, 0], [0.00005, 0], [0.38407, 0], [0.24621, 0],       [0.04797, 0], [0.02870, 0], [0.01756, 0], [0, 0], [0, 0]]])
 
 
 class GFNSampler(IterableDataset):

@@ -1,3 +1,5 @@
+# TODO: run these experiments (<0.01 js)
+
 #python src/graph_building/main.py --loss-fn tb-tlm --reward-idx 2
 #cp -r results results_0
 python src/graph_building/main.py --loss-fn tb-tlm --reward-idx 0 --depth 2 --num-features 8 --learning-rate 0.0001
@@ -27,14 +29,3 @@ python src/graph_building/main.py --loss-fn tb-uniform --reward-idx 0 --depth 2 
 # - soft tlm (0.5 mix with uniform and backproped through so tlm takes over after some time)
 # - smooth tlm (similar to soft)
 # - tb-weighted-tlm
-
-
-
-
-
-# 0. finish todos in main.py
-# 1. check mean log reward at 2.8 for task 3 and <0.01 js for all three for tlm and uniform
-# 2. run all backward policies
-# 3. produce a surface from some of the points and a path over the surface from some of the others
-# 4. evolve min loss mixing schedule over 5k batches
-# 5. complete drug_comparison.sh

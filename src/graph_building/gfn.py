@@ -97,7 +97,20 @@ def get_action_probs(
 
     return action_probs
 
-def process_trajs(get_loss_fn):
+def trajs_to_tensors(trajs):
+
+    # pad inputs to the same length (this is quite memory intensive)
+    nodes = nn.utils.rnn.pad_sequence([n for (n, _e, _m), _a in trajs], batch_first=True)
+    edges = torch.stack([F.pad(e, (0, 0, 0, nodes.shape[1] - e.shape[1], 0, nodes.shape[1] - e.shape[0]), "constant", 0) for (_n, e, _m), _a in trajs])
+    masks = torch.stack([F.pad(m, (0, nodes.shape[1] - m.shape[0]), "constant", 0) for (_n, _e, m), _a in trajs])
+
+    pre_padding_lens = [n.shape[0] for (n, _e, _m), _a in trajs]
+    post_padding_len = nodes.shape[1]
+    actions = adjust_action_idxs(torch.tensor([a for _s, a in trajs]), pre_padding_lens, post_padding_len)
+
+    return nodes, edges, masks, actions
+
+def process_trajs(get_loss_fn):  # this wrapper is so unnecessary but is annoying to get rid of
 
     def get_loss_fn_from_trajs(jagged_trajs, log_rewards, base_models, log_z_model, *model_heads, constant_log_z=None, device="cuda", **kwargs):
 
@@ -108,14 +121,7 @@ def process_trajs(get_loss_fn):
         traj_lens = torch.tensor([len(t) for t in jagged_trajs], device=device)
         trajs = [action for traj in jagged_trajs for action in traj]
 
-        # pad inputs to the same length (this is quite memory intensive)
-        nodes = nn.utils.rnn.pad_sequence([n for (n, _e, _m), _a in trajs], batch_first=True)
-        edges = torch.stack([F.pad(e, (0, 0, 0, nodes.shape[1] - e.shape[1], 0, nodes.shape[1] - e.shape[0]), "constant", 0) for (_n, e, _m), _a in trajs])
-        masks = torch.stack([F.pad(m, (0, nodes.shape[1] - m.shape[0]), "constant", 0) for (_n, _e, m), _a in trajs])
-
-        pre_padding_lens = [n.shape[0] for (n, _e, _m), _a in trajs]
-        post_padding_len = nodes.shape[1]
-        actions = adjust_action_idxs(torch.tensor([a for _s, a in trajs]), pre_padding_lens, post_padding_len)
+        nodes, edges, masks, actions = trajs_to_tensors(trajs)
 
         log_z = torch.tensor(constant_log_z) if constant_log_z is not None else log_z_model(torch.tensor([[1.]], device=device))
 

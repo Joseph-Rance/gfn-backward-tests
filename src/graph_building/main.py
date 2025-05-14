@@ -1,8 +1,10 @@
+import math
 import collections
 import itertools
 import argparse
 import random
 import time
+import pickle
 import sys
 import numpy as np
 import networkx as nx
@@ -13,12 +15,14 @@ from graph_transformer_pytorch import GraphTransformer
 from data_source import (
     GFNSampler,
     get_reward_fn_generator,
-    get_smoothed_log_overfit_reward,
+    get_smoothed_overfit_log_reward,
     get_uniform_counting_log_reward,
-    get_cliques_log_reward
+    get_cliques_log_reward,
+    uniform_true_dist,
+    overfit_true_dist,
+    cliques_true_dist
 )
-from gfn import get_loss_to_uniform_backward, get_metrics
-
+from gfn import get_loss_to_uniform_backward, get_metrics, trajs_to_tensors 
 from backward import (
     const,
     uniform,
@@ -32,10 +36,12 @@ from backward import (
     smooth_tlm,
     biased_tlm,
     max_ent,
-    loss_aligned
+    loss_aligned,
+    meta
 )
+from util import get_graphs_above_threshold
 
-with open("run_command.sh", "w") as f:
+with open("results/experiment_config.sh", "w") as f:
     f.write(" ".join(sys.argv))
 
 parser = argparse.ArgumentParser()
@@ -43,13 +49,13 @@ parser = argparse.ArgumentParser()
 # general
 parser.add_argument("-s", "--seed", type=int, default=1)
 parser.add_argument("-d", "--device", type=str, default="cuda", help="generally 'cuda' or 'cpu'")
-parser.add_argument("-e", "--save", action="store_true", default=False, help="whether to save outputs to a file")
+parser.add_argument("-o", "--save", action="store_true", default=False, help="whether to save outputs to a file")
 parser.add_argument("-c", "--cycle-len", type=int, default=100, help="how often to log/checkpoint (number of batches)")
-parser.add_argument("-t", "--num-test-graphs", type=int, default=64, help="number of graphs to generate for estimating metrics")
+parser.add_argument("-t", "--num-test-graphs", type=int, default=1024, help="number of graphs to generate for estimating metrics")
 
 # env
 parser.add_argument("-r", "--reward-idx", type=int, default=2, help="index of reward function to use")
-parser.add_argument("-b", "--reward-arg", type=float, default=0.8, help="base for exponent used in reward calculation; size of cliques to search for")  # SET TO 3 FOR CLIQUES!
+parser.add_argument("-e", "--reward-arg", type=float, default=[0, 0.8, 3], help="base for exponent used in reward calculation; size of cliques to search for")
 
 # model
 parser.add_argument("-f", "--num-features", type=int, default=16, help="number of features used to represent each node/edge (min 2)")
@@ -57,7 +63,7 @@ parser.add_argument("-y", "--depth", type=int, default=2, help="depth of the tra
 parser.add_argument("-g", "--max-nodes", type=int, default=9, help="maximum number of nodes in a generated graph")
 parser.add_argument("-q", "--random-action-template", type=int, default=2, help="index of the random action config to use (see code)")
 parser.add_argument("-z", "--log-z", type=float, default=None, help="constant value of log(z) to use (learnt if None)")
-parser.add_argument("-i", "--backward_init", type=str, default="random", help="how to initialise the backward policy; one of {random, uniform, <directory name>}")
+parser.add_argument("-i", "--backward-init", type=str, default="random", help="how to initialise the backward policy; one of {random, uniform, <directory name>}")
 parser.add_argument("-j", "--history-bounds", type=int, default=1, help="controls how much the MDP is like a tree")
 
 # training
@@ -65,15 +71,18 @@ parser.add_argument("-l", "--loss-fn", type=str, default="tb-uniform", help="los
 parser.add_argument("-v", "--loss-arg-a", type=float, default=1)
 parser.add_argument("-u", "--loss-arg-b", type=float, default=1)
 parser.add_argument("-w", "--loss-arg-c", type=float, default=1)
-parser.add_argument("-m", "--batch-size", type=int, default=128)
+parser.add_argument("-b", "--batch-size", type=int, default=128)
 parser.add_argument("-p", "--num-precomputed", type=int, default=0, help="number of trajectories from precomputed, high-reward graphs")
 parser.add_argument("-a", "--learning-rate", type=float, default=0.0005)
 parser.add_argument("-n", "--max-update-norm", type=float, default=99.9)
 parser.add_argument("-k", "--num-batches", type=int, default=10_000)
 parser.add_argument("-x", "--backward-reset-period", type=int, default=-1, help="how often to reset the backward policy (-1 for no resets)")
-parser.add_argument("-o", "--print-metrics", type=str, default="", help="keys of metrics to print")
+parser.add_argument("-m", "--meta-test", action="store_true", default=False, help="whether to save outputs for meta learning")
 
 args = parser.parse_args()
+
+NO_TEMPLATE = True  # for if there is no template yet (need to run this file before generating template)
+args.reward_arg = args.reward_arg[args.reward_idx]  # this is a bit hacky but better than forgetting to update this argument
 
 random.seed(args.seed)
 np.random.seed(args.seed)
@@ -92,16 +101,18 @@ configs = {
     "tb-smooth-tlm": (smooth_tlm, {"parameterise_backward": True, "args": {"a": args.loss_arg_a}}),  # TLM / pessimistic mixed with a uniform distribution (pre-backprop)
     "tb-biased-tlm": (biased_tlm, {"parameterise_backward": True, "args": {"multiplier": args.loss_arg_a, "ns": [args.loss_arg_b]}}),  # TLM / pessimistic with weights toward ns nodes
     "tb-max-ent": (max_ent, {"parameterise_backward": True, "args": {}}),  # maximum entropy backward policy
-    ]# TODO: test this converges
-    "tb-loss-aligned": (loss_aligned, {"parameterise_backward": False, "args": {"iters": args.loss_arg_a, "std_mult": args.loss_arg_b}})  # aligned to handmade backward policy
+    "tb-loss-aligned": (loss_aligned, {"parameterise_backward": False, "args": {"iters": args.loss_arg_a, "std_mult": args.loss_arg_b}}),  # aligned to handmade backward policy
+    "meta": (meta, {"parameterise_backward": False, "args": {"weights": torch.load("results/meta_weights.pt") if args.meta_test else None, "reward_arg": args.reward_arg}})  # for meta learning
 }
 
 backward, config = configs[args.loss_fn]
 get_loss = lambda *pargs, **kwargs: get_loss_to_uniform_backward(*backward)(*pargs, **config["args"], **kwargs)
 parameterise_backward = config["parameterise_backward"]
 
-reward_fns = [get_uniform_counting_log_reward, get_smoothed_log_overfit_reward, get_cliques_log_reward]
+reward_fns = [get_uniform_counting_log_reward, get_smoothed_overfit_log_reward, get_cliques_log_reward]
 reward_fn = reward_fns[args.reward_idx]
+high_reward_threshold = (-10, -0.8, 3)[args.reward_idx]
+tru_distribution = (uniform_true_dist, overfit_true_dist, cliques_true_dist)[args.reward_idx]
 
 #compile_model = lambxa x: torch.compile(x)
 compile_model = lambda x: x
@@ -161,7 +172,8 @@ log_z_model = compile_model(nn.Linear(1, 1, bias=False)).to(args.device)
 
 random_configs = [(0, 0, 0),
                   (0.5, 0, 0.5),
-                  (0.8, 0.99, 0.15)]
+                  (0.8, 0.99, 0.15),
+                  (0.8, 0.99, 0)]
 random_prob, random_prob_decay, random_prob_min = random_configs[args.random_action_template]
 
 main_optimiser = torch.optim.Adam(base_models[0].parameters(), lr=args.learning_rate, weight_decay=1e-6)
@@ -197,9 +209,9 @@ if __name__ == "__main__":
     torch.set_float32_matmul_precision('high')
     torch.backends.cudnn.benchmark = True
 
-    mean_metrics = {}
-    
+    train_metrics = {}
     train_time = test_time = 0
+    graphs_above_threshold, prev_graphs_above_threshold = set(), 0
 
     for it, (jagged_trajs, log_rewards) in zip(range(args.num_batches), data_loader):
 
@@ -227,26 +239,38 @@ if __name__ == "__main__":
             bck_optimiser.zero_grad()
             #bck_scheduler.step()
 
-        for k,v in curr_metrics.items():
-            mean_metrics[f"train_{k}"] = mean_metrics.get(f"train_{k}", 0) + v / args.cycle_len
+        graphs_above_threshold.update(get_graphs_above_threshold(jagged_trajs, log_rewards, threshold=high_reward_threshold))  # need to set this threshold correctly!
 
-        mean_metrics["train_norm"] = mean_metrics.get("train_norm", 0) + norm / args.cycle_len
+        for k,v in curr_metrics.items():
+            train_metrics[f"train_{k}"] = train_metrics.get(f"train_{k}", 0) + v / args.cycle_len
+
+        train_metrics["train_norm"] = train_metrics.get("train_norm", 0) + norm / args.cycle_len
 
         with torch.no_grad():
 
             train_time += time.perf_counter()
-            test_time -= time.perf_counter()
 
-            if args.save and (it+1)%args.cycle_len == 0:
+            if args.cycle_len > 0 and (it+1)%args.cycle_len == 0:
+
+                test_time -= time.perf_counter()
 
                 for m in (*base_models, log_z_model, *fwd_models, *bck_models):
                     m.eval()
+
+                train_metrics["graphs_above_threshold"] = len(graphs_above_threshold)
+                train_metrics["new_graphs_above_threshold"] = prev_graphs_above_threshold - len(graphs_above_threshold)
+                prev_graphs_above_threshold = len(graphs_above_threshold)
 
                 template_metrics = {}
 
                 fwd_embs, bck_embs = []
                 template = np.load("results/s/template.npy", allow_pickle=True)
-                for nodes, edges, masks, actions, traj_lens, log_rewards in template:  # TODO: correctly generate these inc importance sampling trajs
+                for nodes, edges, masks, actions, traj_lens in template:
+
+                    log_rewards = []
+                    for graph_idx in (traj_lens - 2):
+                        log_rewards.append(reward_fn(nodes[graph_idx], edges[graph_idx]))
+                    log_rewards = torch.tensor(log_rewards)
 
                     curr_metrics, fwd_action_probs, bck_action_probs = get_metrics(nodes, edges, masks, actions, traj_lens, log_rewards,
                                                                                    base_models, fwd_models, bck_models, args.log_z, log_z_model,
@@ -256,7 +280,7 @@ if __name__ == "__main__":
 
                     # (wasteful to recompute this every time)
                     template_metrics["template_log_rewards_mean"] = template_metrics.get("template_log_rewards_mean", 0) + log_rewards.mean().item() / len(template)
-                    template_metrics["template_log_rewards_mean"] = template_metrics.get("template_log_rewards_mean", 0) + log_rewards.std().item() / len(template)
+                    template_metrics["template_log_rewards_std"] = template_metrics.get("template_log_rewards_std", 0) + log_rewards.std().item() / len(template)
 
                     fwd_embs.append(torch.flatten(fwd_action_probs).to("cpu").numpy())
                     bck_embs.append(torch.flatten(bck_action_probs).to("cpu").numpy())
@@ -264,23 +288,29 @@ if __name__ == "__main__":
                 generated_metrics = {}
                 trajs, log_rewards = data_source.get_sampled(num=args.num_test_graphs, test=True)
 
-                traj_lens, add_edge_idxs, add_node_idxs, stop_idxs = [], [], [], []
+                mean_traj_len, add_edge_idxs, add_node_idxs, stop_idxs = [], [], [], []
 
-                for t in trajs:
+                for idx in range(math.ceil(len(trajs) / args.batch_size)):
 
-                    # TODO t to args below
+                    batch_trajs = trajs[idx * args.batch_size : (idx+1) * args.batch_size]
 
-                    curr_metrics, fwd_action_probs, bck_action_probs = get_metrics(nodes, edges, masks, actions, traj_lens, log_rewards,
+                    traj_lens = torch.tensor([len(t) for t in batch_trajs])
+                    flat_batch_trajs = [s for traj in batch_trajs for s in traj]
+
+                    nodes, edges, masks, actions = trajs_to_tensors(flat_batch_trajs)
+                    batch_log_rewards = log_rewards[idx * args.batch_size : (idx+1) * args.batch_size]
+
+                    curr_metrics, fwd_action_probs, bck_action_probs = get_metrics(nodes, edges, masks, actions, traj_lens, batch_log_rewards,
                                                                                    base_models, fwd_models, bck_models, args.log_z, log_z_model,
                                                                                    *backward, **config["args"], device=args.device)
                     for k,v in curr_metrics.items():
-                        template_metrics[f"generated_{k}"] = template_metrics.get(f"generated_{k}", 0) + v / len(template)  # (could save some divides here)
+                        generated_metrics[f"generated_{k}"] = generated_metrics.get(f"generated_{k}", 0) + v / len(template)  # (could save some divides here)
 
                     # might also be interesting to check the order that edges are added
                     actions = torch.tensor([a for _s, a in trajs[:-1]])
                     sizes = torch.tensor([len(s[0]) for s, _a in trajs[:-1]])
 
-                    traj_lens.append(len(t) - 1)
+                    mean_traj_len += (traj_lens - 1).tolist()
                     add_edge_idxs.append((actions < sizes**2).sum())
                     add_node_idxs.append((actions == sizes**2).sum())
                     stop_idxs.append((actions == sizes**2 + 1).sum())
@@ -288,12 +318,16 @@ if __name__ == "__main__":
                 num_nodes, num_edges, num_cliques, num_n_cliques, num_n_cliques_per_node = [], [], [], [], []
                 clique_size_dist = [0 for __ in range(args.max_nodes+1)]
 
+                gen_distribution = np.array([[[ 0 for _connectivity in range(2)]
+                                                      for _num_nodes_in_one_n_clique in range(7+1)]
+                                                          for _num_nodes in range(7+1)])
+
                 graphs = [t[-2][0] for t in trajs]
-                template_metrics["generated_graph_count"] = len(graphs)
+                generated_metrics["generated_graph_count"] = len(graphs)
                 for i, (nodes, edges, masks) in enumerate(graphs):
 
-                    num_nodes.append(torch.sum(torch.sum(nodes, dim=1) > 0, dim=0))
-                    num_edges.append(torch.sum(edges[:, :, 0], dim=(0, 1)))
+                    num_nodes.append(torch.sum(torch.sum(nodes, dim=1) > 0, dim=0).item())
+                    num_edges.append(torch.sum(edges[:, :, 0], dim=(0, 1)).item())
 
                     adj_matrix = edges[:num_nodes[-1], :num_nodes[-1], 0]
                     g = nx.from_numpy_array(adj_matrix.cpu().numpy(), edge_attr=None)
@@ -309,55 +343,24 @@ if __name__ == "__main__":
                     for size, count in collections.Counter([len(c) for c in cliques]):
                         clique_size_dist[size] += count / len(graphs)
 
-                # <BEGIN UNFINISHED>
-
-                    # TODO: tanimoto similarity and mean reward for top k dissimilar graphs
-                    # TODO: num nodes, connectivities, m nodes in exactly 1 fully-connected k-clique for distribution similarities (ks, klm, js)
+                    gen_distribution[num_nodes[-1]][int(np.sum(n_cliques_per_node == 1))][int(num_nodes[-1]**2 == num_edges[-1])] += 1 / len(graphs)
 
                 num_nodes_dist_counter = collections.Counter(num_nodes)
-                template_metrics["generated_num_nodes"] = [num_nodes_dist_counter[i+1] for i in range(args.max_nodes+1)]
-                template_metrics["generated_clique_size"] = clique_size_dist
+                generated_metrics["generated_num_nodes"] = [num_nodes_dist_counter[i+1] for i in range(args.max_nodes+1)]
+                generated_metrics["generated_clique_size"] = clique_size_dist
 
-                traj_lens, add_edge_idxs, add_node_idxs, stop_idxs, num_nodes, num_edges, num_cliques, num_n_cliques, num_n_cliques_per_node = (
-                    np.array(traj_lens), np.array(add_edge_idxs), np.array(add_node_idxs), np.array(stop_idxs), np.array(num_nodes),
+                mean_traj_len, add_edge_idxs, add_node_idxs, stop_idxs, num_nodes, num_edges, num_cliques, num_n_cliques, num_n_cliques_per_node = (
+                    np.array(mean_traj_len), np.array(add_edge_idxs), np.array(add_node_idxs), np.array(stop_idxs), np.array(num_nodes),
                     np.array(num_edges), np.array(num_cliques), np.array(num_n_cliques), np.array(num_n_cliques_per_node)
                 )
                 connectivities = (num_nodes ** 2 == num_edges)
 
-                for k, v in zip(["log_rewards", "traj_lens", "add_edge_idx", "add_node_idx", "stop_idx",
+                for k, v in zip(["log_rewards", "traj_len", "add_edge_idx", "add_node_idx", "stop_idx",
                                  "num_nodes", "num_edges", "connectivity", "num_cliques", "num_n_cliques", "n_cliques_per_node"],
-                                [log_rewards, traj_lens, add_edge_idxs, add_node_idxs, stop_idxs,
+                                [log_rewards, mean_traj_len, add_edge_idxs, add_node_idxs, stop_idxs,
                                  num_nodes, num_edges, connectivities, num_cliques, num_n_cliques, n_cliques_per_node]):
-                    template_metrics[f"generated_{k}_mean"] = v.mean().item()
-                    template_metrics[f"generated_{k}_std"] = v.std().item()
-
-
-
-
-
-
-
-                # assume that samples are uniformly generated in these buckets (questionalble)
-                # does this make it a lower bound?
-                gen_distribution = np.array([0 for __ in range(1, args.max_nodes+1) for c in ["d", "c"]], dtype=float)
-                for n, c in zip(test_node_counts, test_connectivities):
-                    gen_distribution[2*(n-1) + c] += 1
-                gen_distribution /= len(test_connectivities)
-
-                if args.reward_idx == 2:
-                    tru_distribution = np.array([v for n in range(1, args.max_nodes+1) for v in [(1 - 2 ** (- n ** 2)) / 8, (2 ** (- n ** 2)) / 8]])
-                else:
-                    s = args.reward_arg*(1-args.reward_arg**8)/(1-args.reward_arg)
-                    tru_distribution = np.array([v for n in range(1, args.max_nodes+1) for v in [0, (args.reward_arg ** n)/s]])
-
-                #time:      0.000731; [1, 0, 0, 0, 0, 0, 0, 0, 0]; [1e-05, 0, 0, 0, 0, 0, 0, 0, 0]
-                #time:      0.000433; [2, 0, 0, 0, 0, 0, 0, 0, 0]; [2e-05, 0, 0, 0, 0, 0, 0, 0, 0]
-                #time:      0.000172; [7, 0, 0, 1, 0, 0, 0, 0, 0]; [7.000000000000001e-05, 0, 0, 27.0, 0, 0, 0, 0, 0]
-                #time:      0.000859; [42, 0, 6, 16, 0, 0, 0, 0, 0]; [0.00042000000000000045, 0, 90.0, 420.0, 0, 0, 0, 0, 0]
-                #time:      0.014926; [439, 30, 240, 300, 15, 0, 0, 0, 0]; [0.004389999999999989, 60.0, 3300.0, 7510.0, 510.0, 0, 0, 0, 0]
-                #time:      0.593345; [8933, 3120, 10680, 8600, 1095, 0, 340, 0, 0]; [0.08932999999999806, 1260.0203999999535, 128370.0, 199980.0, 35655.0, 0, 17730.0, 0, 0]
-                #time:     47.605963; [439531, 375165, 688800, 442785, 92505, 24591, 33775, 0, 0]; [4.395310000002771, 8193.676049947462, 6726930.0, 9196215.0, 2824605.0, 975849.0, 1714125.0, 0, 0]
-                # ADJUST FOR REPEATED EDGES WITH DIGRAPH IN DIST??
+                    generated_metrics[f"generated_{k}_mean"] = v.mean().item()
+                    generated_metrics[f"generated_{k}_std"] = v.std().item()
 
                 eta = 0.001
                 # https://en.wikipedia.org/wiki/Kolmogorov%E2%80%93Smirnov_test
@@ -369,70 +372,40 @@ if __name__ == "__main__":
                 js = (np.sum(np.maximum(eta, tru_distribution) * np.log(np.maximum(eta, tru_distribution) / np.maximum(eta, m_distribution))) \
                     + np.sum(np.maximum(eta, gen_distribution) * np.log(np.maximum(eta, gen_distribution) / np.maximum(eta, m_distribution)))) / 2
 
+                generated_metrics["generated_ks"], generated_metrics["generated_kl"], generated_metrics["generated_js"] = ks, kl, js
+                generated_metrics["ens_0"], generated_metrics["ens_1"] = data_source.get_log_unnormalised_ens(), data_source.get_log_unnormalised_ens(refl=True)
+                generated_metrics["lr"], generated_metrics["random_prob"] = main_optimiser.param_groups[0]['lr'], data_source.random_action_prob
 
+                test_time += time.perf_counter()
+                generated_metrics["train_time"], generated_metrics["test_time"] = train_time / (it + 1), test_time / (it + 1)
 
-
-
-
-
-
-
-
-
-
-
-                data_source.get_log_unnormalised_ens()
-                data_source.get_log_unnormalised_ens(refl=True)
-                train_time / (it+1)
-                test_time / (it+1)
-                main_optimiser.param_groups[0]['lr']
-                data_source.random_action_prob
-
-
-
-
-
-
-
-
-
-
-
+                metrics = {"iteration": it} | train_metrics | template_metrics | generated_metrics
+                train_metrics = {}
 
                 if args.save:
 
-                    # save metrics
+                    with open(f"results/metrics/{it}.pkl", "wb") as f:
+                        pickle.dump(metrics, f, pickle.HIGHEST_PROTOCOL)
 
-                    np.save(f"results/batches/nodes_{it}_{i}.npy", nodes.to("cpu").numpy())
-                    np.save(f"results/batches/edges_{it}_{i}.npy", edges.to("cpu").numpy())
-                    np.save(f"results/batches/masks_{it}_{i}.npy", edges.to("cpu").numpy())
+                    with open(f"results/batches/{it}.pkl", "wb") as f:
+                        pickle.dump((trajs, log_rewards), f, pickle.HIGHEST_PROTOCOL)
 
-                    fwd_embs, bck_embs
+                    np.save(f"results/embeddings/{it}_fwd.npy", np.concatenate(fwd_embs, axis=0))
+                    np.save(f"results/embeddings/{it}_bck.npy", np.concatenate(bck_embs, axis=0))
 
                     names = ("stop_model", "node_model", "edge_model")
                     for m, f in zip([base_models[0], *fwd_models, *bck_models, log_z_model],
-                                    ["base_model", *("fwd_" + n for n in names), *("bck_" + n for n in names), "log_z_model"]):
-                        torch.save(m.state_dict(), f"results/models/{f}_{it}.pt")
+                                    ["base_model", *("fwd_" + n for n in names), *("bck_" + n for n in names),
+                                     *(("n_model", "log_z_model") if args.loss_fn == "tb-max-ent" else ("log_z_model", ))]):
+                        torch.save(m.state_dict(), f"results/models/{it}_{f}.pt")
 
-                args.print_metrics  # TODO: also set default
-
-                print(
-                    f"{it: <5} loss: {sum_loss.item():7.2f}" \
-                      + (f" (fwd: {sum_loss_fwd.item():7.2f}, bck: {sum_loss_bck.item():7.2f})" if parameterise_backward else "") + \
-                    f"; norm: {norm:6.3f}; lr: {main_optimiser.param_groups[0]['lr']:9.7f}; " \
-                    f"log(z): {metrics['log_z']:6.3f}; " \
-                    f"mean log reward: {test_mean_log_reward:8.3f} ({mean_log_reward:8.3f}); " \
-                    f"randomness: {data_source.random_action_prob:5.3f}; "
-                        f"connected: {test_mean_connected_prop:4.2f} ({mean_connected_prop:4.2f}); " \
-                    f"({mean_num_nodes:3.1f}; {len(graphs)}), {', '.join([f'{i}: {test_node_count_distribution[i]:0>2}' for i in range(1, 9)])}; " \
-                    f"ks: {ks:8.5f}; kl: {kl:8.5f}; js: {js:8.5f}"
-                )
-
-
-
-                # <END UNFINISHED>
-            
-            test_time += time.perf_counter()
+                print(f"{metrics['iteration']:<5}: ({metrics['lr']:5.0e}; {metrics['random_prob']:5.2f}) " \
+                      f"loss: {metrics['train_combined_loss_mean']:7.2f} (f: {metrics['train_fwd_loss_mean']:7.2f}, b: {metrics['train_bck_loss_mean']:7.2f}) " \
+                      f"conn: {metrics['generated_connectivity_mean']:3.1f} r: {metrics['generated_log_rewards_mean']:8.3f} js: {metrics['generated_js']:8.5f} " \
+                      f"new: {metrics['new_graphs_above_threshold']:0>2} " \
+                      f'''#n: {",".join([f"{i}: {metrics['generated_num_nodes'][i]:0>2}" for i in range(1, 9)])} ''' \
+                      f"(n: {metrics['generated_num_nodes_mean']:3.1f} e: {metrics['generated_num_edges_mean']:3.1f}) " \
+                      f'''#c: {",".join([f"{i}: {metrics['generated_clique_size'][i]:0>2}" for i in range(1, 9)])}''')
 
         if (it+1) % 50 == 0:
             data_source.random_action_prob = max(random_prob_min, data_source.random_action_prob * random_prob_decay)
@@ -447,5 +420,19 @@ if __name__ == "__main__":
                 bck_models.append(n_model)
             bck_optimiser = torch.optim.Adam(itertools.chain(*(i.parameters() for i in bck_models)), lr=args.learning_rate*10, weight_decay=1e-4)
 
+    if args.meta_test:
+        gen_distribution = np.array([[[0 for _connectivity in range(2)] for _num_nodes_in_one_n_clique in range(7+1)] for _num_nodes in range(7+1)])
+        trajs, _log_rewards = data_source.get_sampled(num=args.num_test_graphs, test=True)
+        for i, (nodes, edges, masks) in enumerate([t[-2][0] for t in trajs]):
+            num_nodes = torch.sum(torch.sum(nodes, dim=1) > 0, dim=0).item()
+            num_edges = torch.sum(edges[:, :, 0], dim=(0, 1)).item()
+            adj_matrix = edges[:num_nodes, :num_nodes, 0]
+            g = nx.from_numpy_array(adj_matrix.cpu().numpy(), edge_attr=None)
+            n_cliques = [c for c in nx.algorithms.clique.find_cliques(g) if len(c) == args.reward_arg]
+            n_cliques_per_node = np.bincount(sum(n_cliques, []), minlength=num_nodes)
+            gen_distribution[num_nodes][int(np.sum(n_cliques_per_node == 1))][int(num_nodes**2 == num_edges)] += 1 / len(trajs)
+        eta = 0.001
+        kl = np.sum(np.maximum(eta, tru_distribution) * np.log(np.maximum(eta, tru_distribution) / np.maximum(eta, gen_distribution)))
+        np.save("results/meta_fitness.npy", kl)
 
     print("done.")

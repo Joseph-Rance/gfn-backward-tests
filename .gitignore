@@ -4,3 +4,5 @@ src/drug_design/data/building_blocks/*.pkl
 results*
 *.pyc
 *.pyo
+rewards.npy
+counts.npy

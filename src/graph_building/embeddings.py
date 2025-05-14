@@ -9,14 +9,18 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from gfn import trajs_to_tensors
+
 
 parser = argparse.ArgumentParser()
 
 parser.add_argument("-s", "--seed", type=int, default=1)
 parser.add_argument("-t", "--save-template", action="store_true", default=False, help="generate results/s/template.npy")
+parser.add_argument("-d", "--model-path", type=str, default="", help="path to directory with files containing forward models (for importance sampling)")
 parser.add_argument("-n", "--num-features", type=int, default=8, help="number of features for inputs in the template")
 parser.add_argument("-l", "--template-length", type=int, default=1024, help="approx. number of entries in the template")
 parser.add_argument("-b", "--batch-size", type=int, default=32, help="size of each template batch")
+parser.add_argument("-a", "--random-action-prob", type=float, default=0.25, help="probability of random actions when sampling trajectories")
 parser.add_argument("-r", "--results-dir", type=str, default="results", help="directory to get results from")
 parser.add_argument("-i", "--init-embeddings", action="store_true", default=False, help="generate files in results/s")
 parser.add_argument("-m", "--merge-embeddings", action="store_true", default=False, help="merge results/embeddings into results/s")
@@ -40,38 +44,35 @@ if args.save_template:
     from graph_transformer_pytorch import GraphTransformer
     from data_source import GFNSampler, get_reward_fn_generator, get_smoothed_log_reward
 
-    INTERNAL_BATCH_SIZE = 32
-    NUM_INTERNAL_BATCHES = round(args.template_length / INTERNAL_BATCH_SIZE)
-    BATCH_ARRGEGATION = round(args.batch_size / INTERNAL_BATCH_SIZE)
+    NUM_BATCHES = round(args.template_length / args.batch_size)
 
-    base_model = GraphTransformer(dim=args.num_features, depth=1, edge_dim=args.num_features, with_feedforwards=True, gated_residual=True, rel_pos_emb=False)
-    fwd_models = [nn.Linear(args.num_features, 1), nn.Linear(args.num_features, 1), nn.Linear(args.num_features*3, 1)]
+    base_model = GraphTransformer(dim=args.num_features, depth=args.depth, edge_dim=args.num_features, with_feedforwards=True, gated_residual=True, rel_pos_emb=False).to(args.device)
+    fwd_stop_model = nn.Sequential(nn.Linear(args.num_features, args.num_features*2), nn.LeakyReLU(), nn.Linear(args.num_features*2, 1)).to(args.device)
+    fwd_node_model = nn.Sequential(nn.Linear(args.num_features, args.num_features*2), nn.LeakyReLU(), nn.Linear(args.num_features*2, 1)).to(args.device)
+    fwd_edge_model = nn.Sequential(nn.Linear(args.num_features*3, args.num_features*3*2), nn.LeakyReLU(), nn.Linear(args.num_features*3*2, 1)).to(args.device)
+
+    base_model.load_state_dict(torch.load(f"{args.model_path}/base_model.pt", weights_only=True))
+    fwd_stop_model.load_state_dict(torch.load(f"{args.model_path}/bck_stop_model.pt", weights_only=True))
+    fwd_node_model.load_state_dict(torch.load(f"{args.model_path}/bck_node_model.pt", weights_only=True))
+    fwd_edge_model.load_state_dict(torch.load(f"{args.model_path}/bck_edge_model.pt", weights_only=True))
+
+    fwd_models = [fwd_stop_model, fwd_node_model, fwd_edge_model]
 
     data_source = GFNSampler(base_model, *fwd_models, get_reward_fn_generator(get_smoothed_log_reward),
                              node_features=args.num_features, edge_features=args.num_features,
-                             random_action_prob=1, adjust_random=4, max_len=80, max_nodes=8,
-                             batch_size=INTERNAL_BATCH_SIZE, num_precomputed=0, device="cpu")
+                             random_action_prob=args.random_action_prob, max_len=72, max_nodes=8,
+                             batch_size=args.batch_size, num_precomputed=0, device="cpu")
     data_loader = torch.utils.data.DataLoader(data_source, batch_size=None)
 
-    outs = np.array([None]*ceil(NUM_INTERNAL_BATCHES / BATCH_ARRGEGATION), dtype=object)
-    batch = []
+    outs = np.array([None]*NUM_BATCHES, dtype=object)
 
-    for it, (jagged_trajs, _log_rewards) in zip(range(NUM_INTERNAL_BATCHES), data_loader):
+    for it, (jagged_trajs, _log_rewards) in zip(range(NUM_BATCHES), data_loader):
 
-        for traj in jagged_trajs:
+        traj_lens = torch.tensor([len(t) for t in jagged_trajs])
+        trajs = [s for traj in jagged_trajs for s in traj]
+        nodes, edges, masks, actions = trajs_to_tensors(trajs)
 
-            idx = random.randint(0, len(traj) - 2)
-            batch.append(traj[idx])
-
-        if (it+1) % BATCH_ARRGEGATION == 0 or it + 1 == NUM_INTERNAL_BATCHES:
-
-            # pad inputs to the same length (this is quite memory intensive)
-            nodes = nn.utils.rnn.pad_sequence([n for (n, _e, _m), _a in batch], batch_first=True)
-            edges = torch.stack([F.pad(e, (0, 0, 0, nodes.shape[1] - e.shape[1], 0, nodes.shape[1] - e.shape[0]), "constant", 0) for (_n, e, _m), _a in batch])
-            masks = torch.stack([F.pad(m, (0, nodes.shape[1] - m.shape[0]), "constant", 0) for (_n, _e, m), _a in batch])
-            outs[it // BATCH_ARRGEGATION] = (nodes, edges, masks)
-
-            batch = []
+        outs[it] = (nodes, edges, masks, actions, traj_lens)
 
     np.save(args.results_dir + "/" + args.template_filename, outs, allow_pickle=True)
 
@@ -97,7 +98,7 @@ if args.merge_embeddings:
     #    if f[:4] not in ["fwd_", "bck_"]:
     #        continue
 
-    for i in range(99, 30_000, 100):
+    for i in range(99, 10_000, 100):
         fwd_embeddings.append(np.load(f"{args.results_dir}/embeddings/fwd_{i}.npy"))
         bck_embeddings.append(np.load(f"{args.results_dir}/embeddings/bck_{i}.npy"))
 
@@ -135,6 +136,8 @@ if args.process_data:
     np.save(f"{args.results_dir}/s/processed_data.npy", data)
 
 if args.show_graph or args.save_graph:
+
+    # should add to this graph to show a (smoothed) solid surface + (smoothed) line over the surface
 
     if not args.process_data:
         fwd_vals, bck_vals, losses, colours = np.load(f"{args.results_dir}/s/processed_data.npy")
