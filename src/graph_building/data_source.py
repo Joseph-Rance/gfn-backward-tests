@@ -19,14 +19,14 @@ def get_uniform_counting_log_reward(nodes, _edges, **kwargs):  # this is like co
     num_nodes = torch.sum(torch.sum(nodes, dim=2) > 0, dim=1)
     return torch.clamp(- math.log(2) * num_nodes ** 2, max=1_000, min=-1_000)
 
-def get_cliques_log_reward(nodes, edges, n=3, m=10, eta=0.00001, **kwargs):  # reward is ReLU( m * # nodes in exactly 1 n-clique - # edges )
+def get_cliques_log_reward(nodes, edges, reward_arg=3, m=10, eta=0.00001, **kwargs):  # reward is ReLU( m * # nodes in exactly 1 n-clique - # edges )
     num_nodes = torch.sum(torch.sum(nodes, dim=2) > 0, dim=1)
     num_edges = torch.sum(edges[:, :, :, 0], dim=(1, 2))
     log_rewards = []
     for i in range(len(nodes)):
         adj_matrix = edges[i, :num_nodes[i], :num_nodes[i], 0]
         g = nx.from_numpy_array(adj_matrix.cpu().numpy(), edge_attr=None)  # does not include create_using=nx.DiGraph, so we convert to an undirected graph
-        n_cliques = [c for c in nx.algorithms.clique.find_cliques(g) if len(c) == n]
+        n_cliques = [c for c in nx.algorithms.clique.find_cliques(g) if len(c) == reward_arg]
         n_cliques_per_node = np.bincount(sum(n_cliques, []), minlength=num_nodes[i])
         reward = max(np.sum(n_cliques_per_node == 1) * m - num_edges[i], eta)
         log_rewards.append(math.log(reward))

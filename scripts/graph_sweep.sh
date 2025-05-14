@@ -10,13 +10,6 @@ python src/graph_building/main.py --loss-fn tb-tlm --reward-idx 1 --depth 2 --nu
 #cp -r results results_4
 python src/graph_building/main.py --loss-fn tb-uniform --reward-idx 0 --depth 2 --num-features 8 --learning-rate 0.0001
 
-# 0. test new pb converges
-# 1. test all 3 tasks and all backward policies (implement kl divergence and check vals; importance sample trajs; check diverse + mean log reward >= 2.8 + <0.01 js); test uniform works (to <0.001 js)
-# 2. run all backward policies
-# 3. produce a surface from some of the points and a path over the surface from some of the others
-# 4. evolve min loss mixing schedule over 5k batches
-# 5. complete drug_comparison.sh
-
 #backward polices to test (x2 seeds each):
 # - pb is estimate of normalised inverse loss of the trajectory containing that action (initialised to uniform)
 # - correct backward policy
@@ -34,3 +27,14 @@ python src/graph_building/main.py --loss-fn tb-uniform --reward-idx 0 --depth 2 
 # - soft tlm (0.5 mix with uniform and backproped through so tlm takes over after some time)
 # - smooth tlm (similar to soft)
 # - tb-weighted-tlm
+
+
+
+
+
+# 0. finish todos in main.py
+# 1. check mean log reward at 2.8 for task 3 and <0.01 js for all three for tlm and uniform
+# 2. run all backward policies
+# 3. produce a surface from some of the points and a path over the surface from some of the others
+# 4. evolve min loss mixing schedule over 5k batches
+# 5. complete drug_comparison.sh

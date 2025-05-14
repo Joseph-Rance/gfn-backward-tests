@@ -27,7 +27,8 @@ def is_n_connected(nodes, edges, _mask, ns=[3]):
     return num_nodes in ns and num_edges == num_nodes**2
 
 @torch.no_grad()
-def get_aligned_action_log_prob(nodes, edges, _mask, action_idx, reward_idx=1, reward_arg=0.8, correct_prob=0.99, incorrect_prob=0.01, max_nodes=10):  # get actions following handmade policy (see notepad)
+def get_aligned_action_log_prob(nodes, edges, _mask, action_idx, reward_idx=1, reward_arg=0.8, correct_prob=0.99, incorrect_prob=0.01, max_nodes=10):
+    # get actions following handmade policy (see notepad)
     # this is completely unnormalised for a backward policy unless we have found the aligned forward policy
 
     if reward_idx == 0:
@@ -64,7 +65,7 @@ def get_aligned_action_log_prob(nodes, edges, _mask, action_idx, reward_idx=1, r
             return math.log(incorrect_prob)
 
     else:
-        raise ValueError("aligned policy not implemented for reward index not in {1, 2}")
+        raise ValueError("aligned policy only implemented for reward index in {1, 2}")
 
 def get_state_hash(v):  # v is (state, action, seed)
     obj = (tuple(tuple(s.reshape(-1).tolist()) for s in v[0]), *v[1:])
