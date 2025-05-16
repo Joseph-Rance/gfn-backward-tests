@@ -7,7 +7,7 @@ from util import get_num_previous_acts, is_n_connected, get_aligned_action_log_p
 
 
 def get_bck_probs_const(trajs, _traj_lens, _actions, _raw_embeddings, _embedding_structure, _bck_models, value=0.2, **_kwargs):
-    return torch.full((trajs.shape[0],), math.log(value)), None, {"mean_single_state_p_b_std": 0, "std_single_state_p_b_std": 0}
+    return torch.full((len(trajs),), math.log(value)), None, {"mean_single_state_p_b_std": 0, "std_single_state_p_b_std": 0}
 
 def get_bck_probs_uniform(trajs, _traj_lens, _actions, _raw_embeddings, _embedding_structure, _bck_models, **_kwargs):
     return torch.tensor([-math.log(get_num_previous_acts(s)) for s, _a in trajs]), None, {"mean_single_state_p_b_std": 0, "std_single_state_p_b_std": 0}
@@ -52,8 +52,8 @@ def get_bck_probs_action_mult(trajs, _traj_lens, _actions, _raw_embeddings, _emb
 
         return log_p_b, None, {"mean_single_state_p_b_std": single_state_p_b_std.mean().item(), "std_single_state_p_b_std": single_state_p_b_std.std().item()}
 
-def get_bck_probs_rand(trajs, traj_lens, _actions, _raw_embeddings, _embedding_structure, _bck_models, std=0.125, eps=0.01,**_kwargs):
-    uniform_p_b = torch.tensor([1/get_num_previous_acts(s) for s, _a in trajs]), None
+def get_bck_probs_rand(trajs, traj_lens, _actions, _raw_embeddings, _embedding_structure, _bck_models, std=0.125, eps=0.01, **_kwargs):
+    uniform_p_b = torch.tensor([1/get_num_previous_acts(s) for s, _a in trajs])
     return (
         torch.log(torch.clamp(torch.normal(mean=uniform_p_b, std=std), min=eps, max=1)),
         None,
@@ -201,12 +201,12 @@ def _get_bck_probs_rand_const(jagged_trajs, _traj_lens, _actions, _raw_embedding
     log_p_b = torch.roll(log_p_b, -1, 0)
 
 
-const = (get_bck_probs_const, lambda *_args, **_kwargs: 0)
-uniform = (get_bck_probs_uniform, lambda *_args, **_kwargs: 0)
-action_mult = (get_bck_probs_action_mult, lambda *_args, **_kwargs: 0)
-rand = (get_bck_probs_rand, lambda *_args, **_kwargs: 0)
-aligned = (get_bck_probs_const, lambda *_args, **_kwargs: 0)
-frozen = (get_bck_probs_frozen, lambda *_args, **_kwargs: 0)
+const = (get_bck_probs_const, lambda *pargs, **_kwargs: (torch.tensor([0.]*pargs[1].shape[0], device=pargs[0].device), None))
+uniform = (get_bck_probs_uniform, lambda *pargs, **_kwargs: (torch.tensor([0.]*pargs[1].shape[0], device=pargs[0].device), None))
+action_mult = (get_bck_probs_action_mult, lambda *pargs, **_kwargs: (torch.tensor([0.]*pargs[1].shape[0], device=pargs[0].device), None))
+rand = (get_bck_probs_rand, lambda *pargs, **_kwargs: (torch.tensor([0.]*pargs[1].shape[0], device=pargs[0].device), None))
+aligned = (get_bck_probs_const, lambda *pargs, **_kwargs: (torch.tensor([0.]*pargs[1].shape[0], device=pargs[0].device), None))
+frozen = (get_bck_probs_frozen, lambda *pargs, **_kwargs: (torch.tensor([0.]*pargs[1].shape[0], device=pargs[0].device), None))
 free = (get_bck_probs_tlm, get_bck_loss_free)
 tlm = (get_bck_probs_tlm, get_bck_loss_tlm)
 soft_tlm = (get_bck_probs_soft_tlm, get_bck_loss_tlm)

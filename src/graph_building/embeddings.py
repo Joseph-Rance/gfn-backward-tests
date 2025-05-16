@@ -18,6 +18,7 @@ parser.add_argument("-s", "--seed", type=int, default=1)
 parser.add_argument("-t", "--save-template", action="store_true", default=False, help="generate results/s/template.npy")
 parser.add_argument("-d", "--model-path", type=str, default="", help="path to directory with files containing forward models (for importance sampling)")
 parser.add_argument("-n", "--num-features", type=int, default=8, help="number of features for inputs in the template")
+parser.add_argument("-n", "--depth", type=int, default=2, help="number of features for inputs in the template")
 parser.add_argument("-l", "--template-length", type=int, default=1024, help="approx. number of entries in the template")
 parser.add_argument("-b", "--batch-size", type=int, default=32, help="size of each template batch")
 parser.add_argument("-a", "--random-action-prob", type=float, default=0.25, help="probability of random actions when sampling trajectories")
@@ -42,7 +43,7 @@ torch.manual_seed(args.seed)
 if args.save_template:
 
     from graph_transformer_pytorch import GraphTransformer
-    from data_source import GFNSampler, get_reward_fn_generator, get_smoothed_log_reward
+    from data_source import GFNSampler, get_reward_fn_generator, get_uniform_counting_log_reward
 
     NUM_BATCHES = round(args.template_length / args.batch_size)
 
@@ -58,7 +59,7 @@ if args.save_template:
 
     fwd_models = [fwd_stop_model, fwd_node_model, fwd_edge_model]
 
-    data_source = GFNSampler(base_model, *fwd_models, get_reward_fn_generator(get_smoothed_log_reward),
+    data_source = GFNSampler(base_model, *fwd_models, get_reward_fn_generator(get_uniform_counting_log_reward),
                              node_features=args.num_features, edge_features=args.num_features,
                              random_action_prob=args.random_action_prob, max_len=72, max_nodes=8,
                              batch_size=args.batch_size, num_precomputed=0, device="cpu")

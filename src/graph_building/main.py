@@ -197,8 +197,8 @@ if parameterise_backward:
 reward_fn_generator = get_reward_fn_generator(reward_fn, reward_arg=args.reward_arg)
 
 data_source = GFNSampler(base_models[0], *fwd_models, reward_fn_generator,
-                         node_features=args.num_features, edge_features=args.num_features,
-                         random_action_prob=random_prob, max_len=args.max_len, max_nodes=args.max_nodes, reward_arg=args.reward_arg,
+                         node_features=args.num_features, edge_features=args.num_features, random_action_prob=random_prob,
+                         max_len=args.max_nodes*(args.max_nodes+1), max_nodes=args.max_nodes, reward_arg=args.reward_arg,
                          node_history_bounds=(0, args.history_bounds), edge_history_bounds=(0, args.history_bounds),
                          batch_size=args.batch_size, num_precomputed=args.num_precomputed, edges_first=False,
                          device=args.device)
@@ -246,7 +246,7 @@ if __name__ == "__main__":
 
         train_metrics["train_norm"] = train_metrics.get("train_norm", 0) + norm / args.cycle_len
 
-        with torch.no_grad():
+        with torch.no_grad():  # metrics (move this to a new file)
 
             train_time += time.perf_counter()
 
@@ -258,32 +258,35 @@ if __name__ == "__main__":
                     m.eval()
 
                 train_metrics["graphs_above_threshold"] = len(graphs_above_threshold)
-                train_metrics["new_graphs_above_threshold"] = prev_graphs_above_threshold - len(graphs_above_threshold)
+                train_metrics["new_graphs_above_threshold"] = len(graphs_above_threshold) - prev_graphs_above_threshold
                 prev_graphs_above_threshold = len(graphs_above_threshold)
 
                 template_metrics = {}
 
-                fwd_embs, bck_embs = []
-                template = np.load("results/s/template.npy", allow_pickle=True)
-                for nodes, edges, masks, actions, traj_lens in template:
+                if not NO_TEMPLATE:
 
-                    log_rewards = []
-                    for graph_idx in (traj_lens - 2):
-                        log_rewards.append(reward_fn(nodes[graph_idx], edges[graph_idx]))
-                    log_rewards = torch.tensor(log_rewards)
+                    template = np.load("results/s/template.npy", allow_pickle=True)
 
-                    curr_metrics, fwd_action_probs, bck_action_probs = get_metrics(nodes, edges, masks, actions, traj_lens, log_rewards,
-                                                                                   base_models, fwd_models, bck_models, args.log_z, log_z_model,
-                                                                                   *backward, **config["args"], device=args.device)
-                    for k,v in curr_metrics.items():
-                        template_metrics[f"template_{k}"] = template_metrics.get(f"template_{k}", 0) + v / len(template)  # (could save some divides here)
+                    fwd_embs, bck_embs = [], []
+                    for nodes, edges, masks, actions, traj_lens in template:
 
-                    # (wasteful to recompute this every time)
-                    template_metrics["template_log_rewards_mean"] = template_metrics.get("template_log_rewards_mean", 0) + log_rewards.mean().item() / len(template)
-                    template_metrics["template_log_rewards_std"] = template_metrics.get("template_log_rewards_std", 0) + log_rewards.std().item() / len(template)
+                        log_rewards = []
+                        for graph_idx in (traj_lens - 2):
+                            log_rewards.append(reward_fn(nodes[graph_idx], edges[graph_idx]))
+                        log_rewards = torch.tensor(log_rewards)
 
-                    fwd_embs.append(torch.flatten(fwd_action_probs).to("cpu").numpy())
-                    bck_embs.append(torch.flatten(bck_action_probs).to("cpu").numpy())
+                        curr_metrics, fwd_action_probs, bck_action_probs = get_metrics(nodes, edges, masks, actions, traj_lens, log_rewards,
+                                                                                       base_models, fwd_models, bck_models, args.log_z, log_z_model,
+                                                                                       *backward, **config["args"], device=args.device)
+                        for k,v in curr_metrics.items():
+                            template_metrics[f"template_{k}"] = template_metrics.get(f"template_{k}", 0) + v / len(template)  # (could save some divides here)
+
+                        # (wasteful to recompute this every time)
+                        template_metrics["template_log_rewards_mean"] = template_metrics.get("template_log_rewards_mean", 0) + log_rewards.mean().item() / len(template)
+                        template_metrics["template_log_rewards_std"] = template_metrics.get("template_log_rewards_std", 0) + log_rewards.std().item() / len(template)
+
+                        fwd_embs.append(torch.flatten(fwd_action_probs).to("cpu").numpy())
+                        bck_embs.append(torch.flatten(bck_action_probs).to("cpu").numpy())
 
                 generated_metrics = {}
                 trajs, log_rewards = data_source.get_sampled(num=args.num_test_graphs, test=True)
@@ -304,16 +307,17 @@ if __name__ == "__main__":
                                                                                    base_models, fwd_models, bck_models, args.log_z, log_z_model,
                                                                                    *backward, **config["args"], device=args.device)
                     for k,v in curr_metrics.items():
-                        generated_metrics[f"generated_{k}"] = generated_metrics.get(f"generated_{k}", 0) + v / len(template)  # (could save some divides here)
+                        generated_metrics[f"generated_{k}"] = generated_metrics.get(f"generated_{k}", 0) + v / args.num_test_graphs  # (could save some divides here)
 
                     # might also be interesting to check the order that edges are added
-                    actions = torch.tensor([a for _s, a in trajs[:-1]])
-                    sizes = torch.tensor([len(s[0]) for s, _a in trajs[:-1]])
+                    actions = torch.tensor([a for t in batch_trajs for _s, a in t[:-1]])
+                    sizes = torch.tensor([len(s[0]) for t in batch_trajs for s, _a in t[:-1]])
+                    idxs = torch.tensor([i for traj in batch_trajs for i in range(len(traj) - 1)])
 
                     mean_traj_len += (traj_lens - 1).tolist()
-                    add_edge_idxs.append((actions < sizes**2).sum())
-                    add_node_idxs.append((actions == sizes**2).sum())
-                    stop_idxs.append((actions == sizes**2 + 1).sum())
+                    add_edge_idxs += idxs[actions < sizes**2].tolist()
+                    add_node_idxs += idxs[actions == sizes**2].tolist()
+                    stop_idxs += idxs[actions == sizes**2 + 1].tolist()
 
                 num_nodes, num_edges, num_cliques, num_n_cliques, num_n_cliques_per_node = [], [], [], [], []
                 clique_size_dist = [0 for __ in range(args.max_nodes+1)]
@@ -332,7 +336,7 @@ if __name__ == "__main__":
                     adj_matrix = edges[:num_nodes[-1], :num_nodes[-1], 0]
                     g = nx.from_numpy_array(adj_matrix.cpu().numpy(), edge_attr=None)
 
-                    cliques = nx.algorithms.clique.find_cliques(g)
+                    cliques = list(nx.algorithms.clique.find_cliques(g))
                     n_cliques = [c for c in cliques if len(c) == args.reward_arg]
                     n_cliques_per_node = np.bincount(sum(n_cliques, []), minlength=num_nodes[-1])
 
@@ -340,13 +344,14 @@ if __name__ == "__main__":
                     num_n_cliques.append(len(n_cliques))
                     num_n_cliques_per_node.append(n_cliques_per_node.mean())
 
-                    for size, count in collections.Counter([len(c) for c in cliques]):
+                    for size, count in collections.Counter([len(c) for c in cliques]).items():
                         clique_size_dist[size] += count / len(graphs)
 
-                    gen_distribution[num_nodes[-1]][int(np.sum(n_cliques_per_node == 1))][int(num_nodes[-1]**2 == num_edges[-1])] += 1 / len(graphs)
+                    if num_nodes[-1] < 8:  # don't test for more than 7 nodes because it is too expensive to brute force and too much effort to work out analytically
+                        gen_distribution[num_nodes[-1]][int(np.sum(n_cliques_per_node == 1))][int(num_nodes[-1]**2 == num_edges[-1])] += 1 / len(graphs)
 
                 num_nodes_dist_counter = collections.Counter(num_nodes)
-                generated_metrics["generated_num_nodes"] = [num_nodes_dist_counter[i+1] for i in range(args.max_nodes+1)]
+                generated_metrics["generated_num_nodes"] = [num_nodes_dist_counter[i] / len(num_nodes) for i in range(args.max_nodes+1)]
                 generated_metrics["generated_clique_size"] = clique_size_dist
 
                 mean_traj_len, add_edge_idxs, add_node_idxs, stop_idxs, num_nodes, num_edges, num_cliques, num_n_cliques, num_n_cliques_per_node = (
@@ -393,8 +398,9 @@ if __name__ == "__main__":
                     with open(f"results/batches/{it}_dist.pkl", "wb") as f:
                         pickle.dump(gen_distribution, f, pickle.HIGHEST_PROTOCOL)
 
-                    np.save(f"results/embeddings/{it}_fwd.npy", np.concatenate(fwd_embs, axis=0))
-                    np.save(f"results/embeddings/{it}_bck.npy", np.concatenate(bck_embs, axis=0))
+                    if not NO_TEMPLATE:
+                        np.save(f"results/embeddings/{it}_fwd.npy", np.concatenate(fwd_embs, axis=0))
+                        np.save(f"results/embeddings/{it}_bck.npy", np.concatenate(bck_embs, axis=0))
 
                     names = ("stop_model", "node_model", "edge_model")
                     for m, f in zip([base_models[0], *fwd_models, *bck_models, log_z_model],
@@ -402,13 +408,14 @@ if __name__ == "__main__":
                                      *(("n_model", "log_z_model") if args.loss_fn == "tb-max-ent" else ("log_z_model",))]):
                         torch.save(m.state_dict(), f"results/models/{it}_{f}.pt")
 
-                print(f"{metrics['iteration']:<5}: ({metrics['lr']:5.0e}; {metrics['random_prob']:5.2f}) " \
-                      f"loss: {metrics['train_combined_loss_mean']:7.2f} (f: {metrics['train_fwd_loss_mean']:7.2f}, b: {metrics['train_bck_loss_mean']:7.2f}) " \
+                print(f"{metrics['iteration']:>5} [{generated_metrics['train_time']:4.1f}+{generated_metrics['test_time']:3.1f}]: " \
+                      f"{metrics['lr']:5.0e} {metrics['random_prob']:5.2f} | " \
+                      f"loss: {metrics['train_loss']:7.2f} (f: {metrics['train_tb_loss']:7.2f}, b: {metrics['train_bck_loss']:7.2f}) " \
                       f"conn: {metrics['generated_connectivity_mean']:3.1f} r: {metrics['generated_log_rewards_mean']:8.3f} js: {metrics['generated_js']:8.5f} " \
                       f"new: {metrics['new_graphs_above_threshold']:0>2} " \
-                      f'''#n: {",".join([f"{i}: {metrics['generated_num_nodes'][i]:0>2}" for i in range(1, 9)])} ''' \
+                      f'''#n: {", ".join([f"{i}:{metrics['generated_num_nodes'][i]:4.2f}" for i in range(1, 9)])} ''' \
                       f"(n: {metrics['generated_num_nodes_mean']:3.1f} e: {metrics['generated_num_edges_mean']:3.1f}) " \
-                      f'''#c: {",".join([f"{i}: {metrics['generated_clique_size'][i]:0>2}" for i in range(1, 9)])}''')
+                      f'''#c: {", ".join([f"{i}:{metrics['generated_clique_size'][i]:4.2f}" for i in range(1, 9)])}''')
 
         if (it+1) % 50 == 0:
             data_source.random_action_prob = max(random_prob_min, data_source.random_action_prob * random_prob_decay)

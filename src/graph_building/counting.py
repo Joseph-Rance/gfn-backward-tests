@@ -28,7 +28,7 @@ def brute_force(g, counts, rewards, remaining_edges, n, e, max_e):
             counts[num_1_k_clique_nodes][0] -= 1
         reward = max(float(num_1_k_clique_nodes * m - e), 0)
         reward *= 1e10 / 300**n
-        reward = 0.5 ** (n ** 2)
+        #reward = 0.5 ** (n ** 2)
         rewards[num_1_k_clique_nodes][0] += reward * 2**n * 3**e
         if max_e == e:
             #reward = 0.8 ** n

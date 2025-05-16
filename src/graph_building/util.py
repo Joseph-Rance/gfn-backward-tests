@@ -1,5 +1,4 @@
 import math
-from networkx.classes import graph
 import torch
 
 
@@ -9,7 +8,7 @@ def get_num_previous_acts(state):  # (incorrect for starting state)
     if nodes[0, -1].item() == 1:
         return 1
     edges = edges[mask][:, mask, 0]  # is this necessary?
-    num_nodes = torch.sum(torch.sum(nodes, dim=1) > 0, dim=1)
+    num_nodes = torch.sum(torch.sum(nodes, dim=1) > 0, dim=0)
     has_disconnected = (torch.sum(edges[:, num_nodes-1]) == 0 and torch.sum(edges[num_nodes-1, :]) == 0).item()
     return torch.sum(edges, dim=(0, 1)) + has_disconnected
 
@@ -81,11 +80,11 @@ def huber(x, beta=1, i_delta=4):
 
 def get_graphs_above_threshold(jagged_trajs, log_rewards, threshold=3):  # could use netrworkx to set an edit distance similarity
     graph_set = set()                                                    # threshold here but that's too expensive for now
-    for i, (nodes, edges, _mask) in enumerate(t[-2] for t in jagged_trajs):
+    for i, (nodes, edges, _mask) in enumerate(t[-2][0] for t in jagged_trajs):
         if log_rewards[i] < threshold:
             continue
         num_nodes = torch.sum(torch.sum(nodes, dim=1) > 0, dim=0)
         adj_matrix = edges[:num_nodes, :num_nodes, 0]
-        adj_matrix = torch.minimum(torch.tensor(1), adj_matrix + torch.eye(num_nodes) + torch.transpose(edges[:num_nodes, :num_nodes, 0]))
+        adj_matrix = torch.minimum(torch.tensor(1), adj_matrix + torch.eye(num_nodes) + torch.transpose(edges[:num_nodes, :num_nodes, 0], 0, 1))
         graph_set.add(tuple(tuple(row) for row in adj_matrix))
     return graph_set

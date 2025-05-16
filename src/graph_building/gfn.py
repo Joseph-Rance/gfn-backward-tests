@@ -15,7 +15,7 @@ def get_embeddings(base_model, nodes, edges, masks, device="cuda"):
     output, inverse_indices = torch.unique(combined, return_inverse=True, dim=0)
     unique_nodes, unique_edges = torch.split(output, (1, edges.shape[1]), dim=1)
     unique_nodes = unique_nodes.reshape((unique_nodes.shape[0], -1, nodes.shape[2]))
-    indices = torch.scatter_reduce(torch.full(size=(output.shape[0],), fill_value=inverse_indices.shape[0], device="cpu"), index=inverse_indices,
+    indices = torch.scatter_reduce(torch.full(size=(output.shape[0],), fill_value=inverse_indices.shape[0], device="cpu"), index=inverse_indices.to("cpu"),
                                     src=torch.arange(inverse_indices.shape[0], device="cpu"), dim=0, reduce="amin")
     unique_masks = masks[indices]
 
@@ -93,7 +93,7 @@ def get_action_probs(
     corr_unique_action_probs = unique_action_probs - torch.max(unique_action_probs)  # to avoid overflow
     norm_unique_action_probs = corr_unique_action_probs - torch.logsumexp(corr_unique_action_probs, dim=1).reshape((-1, 1))  # log softmax
 
-    action_probs = norm_unique_action_probs[inverse_indices]
+    action_probs = norm_unique_action_probs[inverse_indices.to("cpu")]
 
     return action_probs
 
@@ -123,7 +123,7 @@ def process_trajs(get_loss_fn):  # this wrapper is so unnecessary but is annoyin
 
         nodes, edges, masks, actions = trajs_to_tensors(trajs)
 
-        log_z = torch.tensor(constant_log_z) if constant_log_z is not None else log_z_model(torch.tensor([[1.]], device=device))
+        log_z = torch.tensor(constant_log_z, device=device) if constant_log_z is not None else log_z_model(torch.tensor([[1.]], device=device))
 
         embeddings = []
         for base_model in base_models:
@@ -181,14 +181,15 @@ def get_get_tb_loss_backward(get_bck_probs, get_bck_loss):
 
         # don't count padding states (kind of wasteful to compute these)
         log_p_f[final_graph_idxs] = 0
-        log_p_b[final_graph_idxs] = 0
+        log_p_b[final_graph_idxs.to(log_p_b.device)] = 0
 
         batch_idx = torch.arange(len(traj_lens), device=device).repeat_interleave(traj_lens)
         traj_log_p_f = scatter(log_p_f.to(device), batch_idx, dim=0, dim_size=traj_lens.shape[0], reduce="sum")
         traj_log_p_b = scatter(log_p_b.to(device), batch_idx, dim=0, dim_size=traj_lens.shape[0], reduce="sum")
 
         log_rewards = log_rewards.to(device)
-        bck_loss, replacement_backward = get_bck_loss(log_z, traj_log_p_f, log_rewards, traj_log_p_b, info, **kwargs)
+        bck_loss_vec, replacement_backward = get_bck_loss(log_z, traj_log_p_f, log_rewards, traj_log_p_b, info, **kwargs)
+        bck_loss = bck_loss_vec.mean()
         traj_log_p_b = traj_log_p_b.detach()
 
         if replacement_backward is not None:  # bit hacky
@@ -196,11 +197,11 @@ def get_get_tb_loss_backward(get_bck_probs, get_bck_loss):
 
         traj_diffs = (log_z + traj_log_p_f) - (log_rewards + traj_log_p_b)  # log_z gets broadcast into a vector here
 
-        tb_loss = huber(traj_diffs)
+        tb_loss = huber(traj_diffs).mean()
 
-        loss = tb_loss.mean() + bck_loss.mean()
+        loss = tb_loss + bck_loss
 
-        return loss, bck_metrics | {"log_z": log_z.item(), "loss": loss.detach(), "tb_loss": tb_loss.detach(), "bck_loss": bck_loss.detach()}
+        return loss, bck_metrics | {"log_z": log_z.item(), "loss": loss.item(), "tb_loss": tb_loss.item(), "bck_loss": bck_loss.item()}
 
     return get_tb_loss_backward
 
@@ -209,7 +210,9 @@ def get_metrics(nodes, edges, masks, actions, traj_lens, log_rewards,
                 base_models, fwd_models, bck_models, constant_log_z, log_z_model,
                 get_bck_probs, get_bck_loss, device="cuda", **kwargs):
 
-    log_z = torch.tensor(constant_log_z) if constant_log_z is not None else log_z_model(torch.tensor([[1.]], device=device))
+    nodes, edges, masks, traj_lens = nodes.to(device), edges.to(device), masks.to(device), traj_lens.to(device)
+
+    log_z = torch.tensor(constant_log_z, device=device) if constant_log_z is not None else log_z_model(torch.tensor([[1.]], device=device))
 
     embeddings = []
     for base_model in base_models:
@@ -219,21 +222,22 @@ def get_metrics(nodes, edges, masks, actions, traj_lens, log_rewards,
     fwd_action_probs = get_action_probs(*raw_embeddings[0], *embedding_structure[0], *fwd_models, random_action_prob=0, apply_masks=True)
     log_p_f = fwd_action_probs[list(range(len(fwd_action_probs))), actions]
 
-    log_p_b, info, bck_metrics = get_bck_probs(list(zip(nodes, edges, masks)), traj_lens, actions, raw_embeddings, embedding_structure, bck_models, **kwargs)  # prob of previous action
+    log_p_b, info, bck_metrics = get_bck_probs(list(zip(list(zip(nodes, edges, masks)), actions)), traj_lens, actions,
+                                               raw_embeddings, embedding_structure, bck_models, device=device, **kwargs)  # prob of previous action
     log_p_b = torch.roll(log_p_b, -1, 0)
 
     final_graph_idxs = torch.cumsum(traj_lens, 0) - 1
 
     # don't count padding states (kind of wasteful to compute these)
     log_p_f[final_graph_idxs] = 0
-    log_p_b[final_graph_idxs] = 0
+    log_p_b[final_graph_idxs.to(log_p_b.device)] = 0
 
     batch_idx = torch.arange(len(traj_lens), device=device).repeat_interleave(traj_lens)
     traj_log_p_f = scatter(log_p_f.to(device), batch_idx, dim=0, dim_size=traj_lens.shape[0], reduce="sum")
     traj_log_p_b = scatter(log_p_b.to(device), batch_idx, dim=0, dim_size=traj_lens.shape[0], reduce="sum")
 
     log_rewards = log_rewards.to(device)
-    bck_loss, replacement_backward = get_bck_loss(log_z, traj_log_p_f, log_rewards, traj_log_p_b, info, **kwargs)
+    bck_loss, replacement_backward = get_bck_loss(log_z, traj_log_p_f, log_rewards, traj_log_p_b, info, device=device, **kwargs)
     traj_log_p_b = traj_log_p_b.detach()
 
     if replacement_backward is not None:  # bit hacky
@@ -244,7 +248,7 @@ def get_metrics(nodes, edges, masks, actions, traj_lens, log_rewards,
 
     tb_loss = huber(traj_diffs)
 
-    loss = tb_loss + bck_loss
+    loss = tb_loss + bck_loss.to(device)
 
     return (bck_metrics | {
         "fwd_prob_mean": log_p_f.mean().item(),
