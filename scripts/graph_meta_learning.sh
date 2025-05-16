@@ -1,3 +1,2 @@
-# TODO: see src/graph_building/meta.py
-# is it much slower to get full metrics? if no, use these for surface as well; if yes, what small metrics might we want?
-# make/save results/m
+python src/graph_building/meta.py  # (might need to skip some metric testing if too slow)
+cp -r results results_graph_meta

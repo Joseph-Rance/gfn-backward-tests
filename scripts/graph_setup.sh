@@ -11,6 +11,11 @@
 source ~/cali/anaconda3/bin/activate main
 mkdir results
 cd results
-mkdir embeddings s metrics models batches
+mkdir embeddings metrics models batches s m
 cd ../src
 python graph_building/embeddings.py --save-template
+
+mkdir backward
+cd backward
+mkdir 0 1 2 3 4 5 6 7
+cd ..

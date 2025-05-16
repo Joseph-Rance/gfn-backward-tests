@@ -301,7 +301,7 @@ class SynthesisSampler(Sampler):
                     continue
 
                 b_a = graph_actions[j]
-                gp, both_are_bb, bb_idx = self.env.backward_step(graphs[i], b_a)
+                gp, both_are_bb, bb_idx = self.env.backward_step(graphs[i], b_a)  # add try accept here?
                 graphs[i] = self.ctx.obj_to_graph(gp) if gp else self.env.empty_graph()
                 b_a.bb = both_are_bb
 

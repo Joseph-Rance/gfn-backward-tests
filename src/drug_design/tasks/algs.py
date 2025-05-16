@@ -1,14 +1,17 @@
 import torch
 from torch_scatter import scatter
 
-from back_gfn.tasks.util import TrajectoryBalanceBase
+from drug_design.tasks.util import TrajectoryBalanceBase
 
 
 def huber(x, beta=1, i_delta=4):
     ax = torch.abs(x)
     return torch.where(ax <= beta, 0.5 * x * x, beta * (ax - beta / 2)) * i_delta
 
-# unfortunately, torch-discounted-cumsum no longer works :(
+def sq_dist_fn(x):
+    return x * x
+
+# torch-discounted-cumsum is broken
 def discounted_cumsum_left(l, gamma):
     l = l.clone()
     for i in range(1, len(l)):
@@ -26,7 +29,7 @@ class TrajectoryBalancePrefAC(TrajectoryBalanceBase):
         self.gamma = gamma
         self.entropy_loss_multiplier = entropy_loss_multiplier
 
-    def compute_batch_losses(self, model, batch, _target_model, loss=huber):
+    def compute_batch_losses(self, model, batch, _target_model, dist_fn=huber):
 
         forward_log_Z = model.logZ(batch.cond_info[batch.from_p_b.logical_not()])[:, 0]
         forward_clipped_log_R = torch.maximum(batch.log_rewards[batch.from_p_b.logical_not()], torch.tensor(-75, device=self.device)).float()
@@ -58,7 +61,7 @@ class TrajectoryBalancePrefAC(TrajectoryBalanceBase):
         prev_state_vals = torch.roll(per_graph_out[:, 1], -1, 0)  # prev state when going backwards
 
         advantage = (rewards + self.gamma * state_vals - prev_state_vals)
-        critic_loss = - loss(advantage)
+        critic_loss = - dist_fn(advantage)
         advantage = advantage.detach()
 
         p_B_loss = - (advantage * log_p_B[batch.from_p_b.repeat_interleave(batch.traj_lens)]).mean() \
@@ -70,7 +73,7 @@ class TrajectoryBalancePrefAC(TrajectoryBalanceBase):
         traj_log_p_B = traj_log_p_B.detach()
 
         traj_diffs = (forward_log_Z + traj_log_p_F[batch.from_p_b.logical_not()]) - (forward_clipped_log_R + traj_log_p_B[batch.from_p_b.logical_not()])
-        tb_loss = loss(traj_diffs).mean()  # train p_F with p_B from prev. iteration
+        tb_loss = dist_fn(traj_diffs).mean()  # train p_F with p_B from prev. iteration
                                            # (slightly different from algorithm 1 in the paper)
 
         loss = tb_loss + p_B_loss + critic_loss
@@ -83,7 +86,10 @@ class TrajectoryBalancePrefAC(TrajectoryBalanceBase):
             "tb_loss": tb_loss.item(),
             "p_b_loss": p_B_loss.item(),
             "critic_loss": critic_loss.item(),
-            "loss": loss.item()
+            "loss": loss.item(),
+            "bck_std": torch.mean(torch.tensor([
+                torch.std(torch.concatenate([torch.flatten(p[i]) for p in bck_cat.logsoftmax()])) for i, _a in enumerate(batch.bck_actions)
+            ])).item()
         }
 
         return loss, info
@@ -99,7 +105,7 @@ class TrajectoryBalancePrefDQN(TrajectoryBalanceBase):
         self.gamma = gamma
         self.entropy_loss_multiplier = entropy_loss_multiplier
 
-    def compute_batch_losses(self, model, batch, target_model, loss=huber):
+    def compute_batch_losses(self, model, batch, target_model, dist_fn=huber):
 
         forward_log_Z = model.logZ(batch.cond_info[batch.from_p_b.logical_not()])[:, 0]
         forward_clipped_log_R = torch.maximum(batch.log_rewards[batch.from_p_b.logical_not()], torch.tensor(-75, device=self.device)).float()
@@ -132,7 +138,7 @@ class TrajectoryBalancePrefDQN(TrajectoryBalanceBase):
 
         target = -torch.concatenate(batch.bbs_costs[batch.from_p_b]) + self.gamma * max_target_q_B[batch.from_p_b]
         q_pred = log_q_B[batch.from_p_b.repeat_interleave(batch.traj_lens)].exp()
-        p_B_loss = loss(target - q_pred).mean() \
+        p_B_loss = dist_fn(target - q_pred).mean() \
                  + self.entropy_loss_multiplier * sum([(i * i.exp()).sum(1) for i in log_p_B[p_b_mask]])
 
         traj_log_p_F = scatter(log_p_F, batch_idx, dim=0, dim_size=batch.traj_lens.shape[0], reduce="sum")
@@ -141,7 +147,7 @@ class TrajectoryBalancePrefDQN(TrajectoryBalanceBase):
         traj_log_p_B = traj_log_p_B.detach()
 
         traj_diffs = (forward_log_Z + traj_log_p_F[batch.from_p_b.logical_not()]) - (forward_clipped_log_R + traj_log_p_B[batch.from_p_b.logical_not()])
-        tb_loss = loss(traj_diffs).mean()  # train p_F with p_B from prev. iteration
+        tb_loss = dist_fn(traj_diffs).mean()  # train p_F with p_B from prev. iteration
                                            # (slightly different from algorithm 1 in the paper)
 
         loss = tb_loss + p_B_loss
@@ -153,7 +159,10 @@ class TrajectoryBalancePrefDQN(TrajectoryBalanceBase):
             "log_r": forward_clipped_log_R.mean().item(),
             "tb_loss": tb_loss.item(),
             "p_b_loss": p_B_loss.item(),
-            "loss": loss.item()
+            "loss": loss.item(),
+            "bck_std": torch.mean(torch.tensor([
+                torch.std(torch.concatenate([torch.flatten(p[i]) for p in bck_cat.logsoftmax()])) for i, _a in enumerate(batch.bck_actions)
+            ])).item()
         }
 
         return loss, info
@@ -170,7 +179,7 @@ class TrajectoryBalancePrefPPO(TrajectoryBalanceBase):
         self.entropy_loss_multiplier = entropy_loss_multiplier
         self.eps = eps
 
-    def compute_batch_losses(self, model, batch, target_model, loss=huber):
+    def compute_batch_losses(self, model, batch, target_model, dist_fn=huber):
 
         forward_log_Z = model.logZ(batch.cond_info[batch.from_p_b.logical_not()])[:, 0]
         forward_clipped_log_R = torch.maximum(batch.log_rewards[batch.from_p_b.logical_not()], torch.tensor(-75, device=self.device)).float()
@@ -210,7 +219,7 @@ class TrajectoryBalancePrefPPO(TrajectoryBalanceBase):
             c -= l
 
         advantage = (G - per_graph_out[:, 1])  # 0 is for reward pred (unused)
-        baseline_loss = - loss(advantage)
+        baseline_loss = - dist_fn(advantage)
         advantage = advantage.detach()
 
         idxs = batch.from_p_b.repeat_interleave(batch.traj_lens)
@@ -225,7 +234,7 @@ class TrajectoryBalancePrefPPO(TrajectoryBalanceBase):
         traj_log_p_B = traj_log_p_B.detach()
 
         traj_diffs = (forward_log_Z + traj_log_p_F[batch.from_p_b.logical_not()]) - (forward_clipped_log_R + traj_log_p_B[batch.from_p_b.logical_not()])
-        tb_loss = loss(traj_diffs).mean()  # train p_F with p_B from prev. iteration
+        tb_loss = dist_fn(traj_diffs).mean()  # train p_F with p_B from prev. iteration
                                            # (slightly different from algorithm 1 in the paper)
 
         loss = tb_loss + p_B_loss + baseline_loss
@@ -238,7 +247,10 @@ class TrajectoryBalancePrefPPO(TrajectoryBalanceBase):
             "tb_loss": tb_loss.item(),
             "p_b_loss": p_B_loss.item(),
             "baseline_loss": baseline_loss.item(),
-            "loss": loss.item()
+            "loss": loss.item(),
+            "bck_std": torch.mean(torch.tensor([
+                torch.std(torch.concatenate([torch.flatten(p[i]) for p in bck_cat.logsoftmax()])) for i, _a in enumerate(batch.bck_actions)
+            ])).item()
         }
 
         return loss, info
@@ -254,7 +266,7 @@ class TrajectoryBalancePrefREINFORCE(TrajectoryBalanceBase):
         self.gamma = gamma
         self.entropy_loss_multiplier = entropy_loss_multiplier
 
-    def compute_batch_losses(self, model, batch, _target_model, loss=huber):
+    def compute_batch_losses(self, model, batch, _target_model, dist_fn=huber):
 
         forward_log_Z = model.logZ(batch.cond_info[batch.from_p_b.logical_not()])[:, 0]
         forward_clipped_log_R = torch.maximum(batch.log_rewards[batch.from_p_b.logical_not()], torch.tensor(-75, device=self.device)).float()
@@ -287,7 +299,7 @@ class TrajectoryBalancePrefREINFORCE(TrajectoryBalanceBase):
             c -= l
 
         advantage = (G - per_graph_out[:, 1])  # 0 is for reward pred (unused)
-        baseline_loss = - loss(advantage)
+        baseline_loss = - dist_fn(advantage)
         advantage = advantage.detach()
 
         p_B_loss = - (advantage * log_p_B[batch.from_p_b.repeat_interleave(batch.traj_lens)]).mean() \
@@ -299,7 +311,7 @@ class TrajectoryBalancePrefREINFORCE(TrajectoryBalanceBase):
         traj_log_p_B = traj_log_p_B.detach()
 
         traj_diffs = (forward_log_Z + traj_log_p_F[batch.from_p_b.logical_not()]) - (forward_clipped_log_R + traj_log_p_B[batch.from_p_b.logical_not()])
-        tb_loss = loss(traj_diffs).mean()  # train p_F with p_B from prev. iteration
+        tb_loss = dist_fn(traj_diffs).mean()  # train p_F with p_B from prev. iteration
                                            # (slightly different from algorithm 1 in the paper)
 
         loss = tb_loss + p_B_loss + baseline_loss
@@ -312,7 +324,10 @@ class TrajectoryBalancePrefREINFORCE(TrajectoryBalanceBase):
             "tb_loss": tb_loss.item(),
             "p_b_loss": p_B_loss.item(),
             "baseline_loss": baseline_loss.item(),
-            "loss": loss.item()
+            "loss": loss.item(),
+            "bck_std": torch.mean(torch.tensor([
+                torch.std(torch.concatenate([torch.flatten(p[i]) for p in bck_cat.logsoftmax()])) for i, _a in enumerate(batch.bck_actions)
+            ])).item()
         }
 
         return loss, info
@@ -320,7 +335,7 @@ class TrajectoryBalancePrefREINFORCE(TrajectoryBalanceBase):
 
 class TrajectoryBalanceUniform(TrajectoryBalanceBase):
 
-    def compute_batch_losses(self, model, batch, _target_model, loss=huber):
+    def compute_batch_losses(self, model, batch, _target_model, dist_fn=huber):
 
         log_Z = model.logZ(batch.cond_info)[:, 0]
         clipped_log_R = torch.maximum(batch.log_rewards, torch.tensor(-75, device=self.device)).float()
@@ -345,14 +360,15 @@ class TrajectoryBalanceUniform(TrajectoryBalanceBase):
         traj_log_p_B = scatter(log_p_B, batch_idx, dim=0, dim_size=batch.traj_lens.shape[0], reduce="sum")
 
         traj_diffs = (log_Z + traj_log_p_F) - (clipped_log_R + traj_log_p_B)
-        loss = loss(traj_diffs).mean()
+        loss = dist_fn(traj_diffs).mean()
 
         info = {
             "log_z": log_Z.mean().item(),
             "log_p_f": traj_log_p_F.mean().item(),
             "log_p_b": traj_log_p_B.mean().item(),
             "log_r": clipped_log_R.mean().item(),
-            "loss": loss.item()
+            "loss": loss.item(),
+            "bck_std": 0
         }
 
         return loss, info
@@ -360,7 +376,7 @@ class TrajectoryBalanceUniform(TrajectoryBalanceBase):
 
 class TrajectoryBalanceTLM(TrajectoryBalanceBase):
 
-    def compute_batch_losses(self, model, batch, _target_model, loss=huber):
+    def compute_batch_losses(self, model, batch, _target_model, dist_fn=huber):
 
         log_Z = model.logZ(batch.cond_info)[:, 0]
         clipped_log_R = torch.maximum(batch.log_rewards, torch.tensor(-75, device=self.device)).float()
@@ -385,11 +401,11 @@ class TrajectoryBalanceTLM(TrajectoryBalanceBase):
         traj_log_p_F = scatter(log_p_F, batch_idx, dim=0, dim_size=batch.traj_lens.shape[0], reduce="sum")
         traj_log_p_B = scatter(log_p_B, batch_idx, dim=0, dim_size=batch.traj_lens.shape[0], reduce="sum")
 
-        back_loss = traj_log_p_B.mean()
+        back_loss = -traj_log_p_B.mean()
         traj_log_p_B = traj_log_p_B.detach()
 
         traj_diffs = (log_Z + traj_log_p_F) - (clipped_log_R + traj_log_p_B)
-        tb_loss = loss(traj_diffs).mean()  # train p_F with p_B from prev. iteration
+        tb_loss = dist_fn(traj_diffs).mean()  # train p_F with p_B from prev. iteration
                                                     # (slightly different from algorithm 1 in the paper)
 
         loss = tb_loss + back_loss
@@ -401,7 +417,10 @@ class TrajectoryBalanceTLM(TrajectoryBalanceBase):
             "log_r": clipped_log_R.mean().item(),
             "tb_loss": tb_loss.item(),
             "back_loss": back_loss.item(),
-            "loss": loss.item()
+            "loss": loss.item(),
+            "bck_std": torch.mean(torch.tensor([
+                torch.std(torch.concatenate([torch.flatten(p[i]) for p in bck_cat.logsoftmax()])) for i, _a in enumerate(batch.bck_actions)
+            ])).item()
         }
 
         return loss, info
@@ -409,7 +428,7 @@ class TrajectoryBalanceTLM(TrajectoryBalanceBase):
 
 class TrajectoryBalanceMaxEnt(TrajectoryBalanceBase):
 
-    def compute_batch_losses(self, model, batch, _target_model, loss=huber):
+    def compute_batch_losses(self, model, batch, _target_model, dist_fn=huber):
 
         log_Z = model.logZ(batch.cond_info)[:, 0]
         clipped_log_R = torch.maximum(batch.log_rewards, torch.tensor(-75, device=self.device)).float()
@@ -465,11 +484,11 @@ class TrajectoryBalanceMaxEnt(TrajectoryBalanceBase):
         # where the sum is over the full trajectory and s_F is the last state
 
         traj_pred_l = log_n_preds[torch.maximum(final_graph_idxs - 2, first_graph_idxs)]  # kind of wasteful
-        n_loss = loss(traj_log_p_B + traj_pred_l).mean()
+        n_loss = dist_fn(traj_log_p_B + traj_pred_l).mean()
         traj_log_p_B = traj_log_p_B.detach()
 
         traj_diffs = (log_Z + traj_log_p_F) - (clipped_log_R + traj_log_p_B)
-        tb_loss = loss(traj_diffs).mean()
+        tb_loss = dist_fn(traj_diffs).mean()
 
         loss = tb_loss + n_loss
 
@@ -480,7 +499,10 @@ class TrajectoryBalanceMaxEnt(TrajectoryBalanceBase):
             "log_r": clipped_log_R.mean().item(),
             "tb_loss": tb_loss.item(),
             "n_loss": n_loss.item(),
-            "loss": loss.item()
+            "loss": loss.item(),
+            "bck_std": torch.mean(torch.tensor([
+                torch.std(torch.concatenate([torch.flatten(p[i]) for p in bck_cat.logsoftmax()])) for i, _a in enumerate(batch.bck_actions)
+            ])).item()
         }
 
         return loss, info
@@ -488,7 +510,7 @@ class TrajectoryBalanceMaxEnt(TrajectoryBalanceBase):
 
 class TrajectoryBalanceFree(TrajectoryBalanceBase):
 
-    def compute_batch_losses(self, model, batch, _target_model, loss=huber):
+    def compute_batch_losses(self, model, batch, _target_model, dist_fn=huber):
 
         log_Z = model.logZ(batch.cond_info)[:, 0]
         clipped_log_R = torch.maximum(batch.log_rewards, torch.tensor(-75, device=self.device)).float()
@@ -515,14 +537,17 @@ class TrajectoryBalanceFree(TrajectoryBalanceBase):
 
         # note: nan loss here may require updating action masks to have only -1_000 penalty
         traj_diffs = (log_Z + traj_log_p_F) - (clipped_log_R + traj_log_p_B)
-        loss = loss(traj_diffs).mean()
+        loss = dist_fn(traj_diffs).mean()
 
         info = {
             "log_z": log_Z.mean().item(),
             "log_p_f": traj_log_p_F.mean().item(),
             "log_p_b": traj_log_p_B.mean().item(),
             "log_r": clipped_log_R.mean().item(),
-            "loss": loss.item()
+            "loss": loss.item(),
+            "bck_std": torch.mean(torch.tensor([
+                torch.std(torch.concatenate([torch.flatten(p[i]) for p in bck_cat.logsoftmax()])) for i, _a in enumerate(batch.bck_actions)
+            ])).item()
         }
 
         return loss, info

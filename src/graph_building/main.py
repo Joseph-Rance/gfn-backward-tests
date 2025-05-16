@@ -22,7 +22,7 @@ from data_source import (
     overfit_true_dist,
     cliques_true_dist
 )
-from gfn import get_loss_to_uniform_backward, get_metrics, trajs_to_tensors 
+from gfn import get_get_tb_loss_backward, get_loss_to_uniform_backward, get_metrics, trajs_to_tensors 
 from backward import (
     const,
     uniform,
@@ -74,7 +74,7 @@ parser.add_argument("-w", "--loss-arg-c", type=float, default=1)
 parser.add_argument("-b", "--batch-size", type=int, default=128)
 parser.add_argument("-p", "--num-precomputed", type=int, default=0, help="number of trajectories from precomputed, high-reward graphs")
 parser.add_argument("-a", "--learning-rate", type=float, default=0.0005)
-parser.add_argument("-n", "--max-update-norm", type=float, default=99.9)
+parser.add_argument("-n", "--max-update-norm", type=float, default=499.9)
 parser.add_argument("-k", "--num-batches", type=int, default=10_000)
 parser.add_argument("-x", "--backward-reset-period", type=int, default=-1, help="how often to reset the backward policy (-1 for no resets)")
 parser.add_argument("-m", "--meta-test", action="store_true", default=False, help="whether to save outputs for meta learning")
@@ -101,12 +101,12 @@ configs = {
     "tb-smooth-tlm": (smooth_tlm, {"parameterise_backward": True, "args": {"a": args.loss_arg_a}}),  # TLM / pessimistic mixed with a uniform distribution (pre-backprop)
     "tb-biased-tlm": (biased_tlm, {"parameterise_backward": True, "args": {"multiplier": args.loss_arg_a, "ns": [args.loss_arg_b]}}),  # TLM / pessimistic with weights toward ns nodes
     "tb-max-ent": (max_ent, {"parameterise_backward": True, "args": {}}),  # maximum entropy backward policy
-    "tb-loss-aligned": (loss_aligned, {"parameterise_backward": False, "args": {"iters": args.loss_arg_a, "std_mult": args.loss_arg_b}}),  # aligned to handmade backward policy
+    "tb-loss-aligned": (loss_aligned, {"parameterise_backward": False, "args": {"iters": args.loss_arg_a, "std_mult": args.loss_arg_b}}),  # aligned to loss-based backward policy
     "meta": (meta, {"parameterise_backward": False, "args": {"weights": torch.load("results/meta_weights.pt") if args.meta_test else None, "reward_arg": args.reward_arg}})  # for meta learning
 }
 
 backward, config = configs[args.loss_fn]
-get_loss = lambda *pargs, **kwargs: get_loss_to_uniform_backward(*backward)(*pargs, **config["args"], **kwargs)
+get_loss = lambda *pargs, **kwargs: get_get_tb_loss_backward(*backward)(*pargs, **config["args"], **kwargs)
 parameterise_backward = config["parameterise_backward"]
 
 reward_fns = [get_uniform_counting_log_reward, get_smoothed_overfit_log_reward, get_cliques_log_reward]
