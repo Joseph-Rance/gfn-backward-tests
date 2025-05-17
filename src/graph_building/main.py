@@ -49,7 +49,7 @@ parser = argparse.ArgumentParser()
 
 # general
 parser.add_argument("-s", "--seed", type=int, default=1)
-parser.add_argument("-d", "--device", type=str, default="cuda", help="generally 'cuda' or 'cpu'")
+parser.add_argument("-d", "--device", type=str, default="cuda", help="usually 'cuda' or 'cpu'")
 parser.add_argument("-o", "--save", action="store_true", default=False, help="whether to save outputs to a file")
 parser.add_argument("-c", "--cycle-len", type=int, default=100, help="how often to log/checkpoint (number of batches)")
 parser.add_argument("-t", "--num-test-graphs", type=int, default=1024, help="number of graphs to generate for estimating metrics")
@@ -112,7 +112,7 @@ parameterise_backward = config["parameterise_backward"]
 
 reward_fns = [get_uniform_counting_log_reward, get_smoothed_overfit_log_reward, get_cliques_log_reward]
 reward_fn = reward_fns[args.reward_idx]
-high_reward_threshold = (-10, -0.8, 3)[args.reward_idx]
+high_reward_threshold = (-10, -0.8, 2.8)[args.reward_idx]
 tru_distribution = (uniform_true_dist, overfit_true_dist, cliques_true_dist)[args.reward_idx]
 
 #compile_model = lambxa x: torch.compile(x)
@@ -325,7 +325,7 @@ if __name__ == "__main__":
 
                 gen_distribution = np.array([[[ 0 for _connectivity in range(2)]
                                                       for _num_nodes_in_one_n_clique in range(7+1)]
-                                                          for _num_nodes in range(7+1)])
+                                                          for _num_nodes in range(7+1)], dtype=float)
 
                 graphs = [t[-2][0] for t in trajs]
                 generated_metrics["generated_graph_count"] = len(graphs)
@@ -349,7 +349,9 @@ if __name__ == "__main__":
                         clique_size_dist[size] += count / len(graphs)
 
                     if num_nodes[-1] < 8:  # don't test for more than 7 nodes because it is too expensive to brute force and too much effort to work out analytically
-                        gen_distribution[num_nodes[-1]][int(np.sum(n_cliques_per_node == 1))][int(num_nodes[-1]**2 == num_edges[-1])] += 1 / len(graphs)
+                        gen_distribution[num_nodes[-1]][int(np.sum(n_cliques_per_node == 1))][int(num_nodes[-1]**2 == num_edges[-1])] += 1
+
+                gen_distribution /= np.sum(gen_distribution)
 
                 num_nodes_dist_counter = collections.Counter(num_nodes)
                 generated_metrics["generated_num_nodes"] = [num_nodes_dist_counter[i] / len(num_nodes) for i in range(args.max_nodes+1)]
@@ -410,11 +412,11 @@ if __name__ == "__main__":
                                      *(("n_model", "log_z_model") if args.loss_fn == "tb-max-ent" else ("log_z_model",))]):
                         torch.save(m.state_dict(), f"results/models/{it}_{f}.pt")
 
-                print(f"{metrics['iteration']:>5} [{generated_metrics['train_time']*20:4.1f}+{generated_metrics['test_time']*20:3.1f}]: " \
+                print(f"{metrics['iteration']:>5} [{generated_metrics['train_time']*20:4.1f}+{generated_metrics['test_time']*20:4.1f}]: " \
                       f"{metrics['lr']:5.0e} {metrics['random_prob']:5.2f} | " \
                       f"loss: {metrics['train_loss']:7.2f} (f: {metrics['train_tb_loss']:7.2f}, b: {metrics['train_bck_loss']:7.2f}) " \
                       f"conn: {metrics['generated_connectivity_mean']:3.1f} r: {metrics['generated_log_rewards_mean']:8.3f} js: {metrics['generated_js']:8.5f} " \
-                      f"new: {metrics['new_graphs_above_threshold']:0>2} " \
+                      f"new: {metrics['new_graphs_above_threshold'] / (args.cycle_len * args.batch_size):5.3f} " \
                       f'''#n: {", ".join([f"{i}:{metrics['generated_num_nodes'][i]:4.2f}" for i in range(1, 9)])} ''' \
                       f"(n: {metrics['generated_num_nodes_mean']:3.1f} e: {metrics['generated_num_edges_mean']:3.1f}) " \
                       f'''#c: {", ".join([f"{i}:{metrics['generated_clique_size'][i]:4.2f}" for i in range(1, 9)])}''')
@@ -437,7 +439,7 @@ if __name__ == "__main__":
         train_time -= time.perf_counter()
 
     if args.meta_test:
-        gen_distribution = np.array([[[0 for _connectivity in range(2)] for _num_nodes_in_one_n_clique in range(7+1)] for _num_nodes in range(7+1)])
+        gen_distribution = np.array([[[0 for _connectivity in range(2)] for _num_nodes_in_one_n_clique in range(7+1)] for _num_nodes in range(7+1)], dtype=float)
         trajs, _log_rewards = data_source.get_sampled(num=args.num_test_graphs, test=True)
         for i, (nodes, edges, masks) in enumerate([t[-2][0] for t in trajs]):
             num_nodes = torch.sum(torch.sum(nodes, dim=1) > 0, dim=0).item()
@@ -446,9 +448,12 @@ if __name__ == "__main__":
             g = nx.from_numpy_array(adj_matrix.cpu().numpy(), edge_attr=None)
             n_cliques = [c for c in nx.algorithms.clique.find_cliques(g) if len(c) == args.reward_arg]
             n_cliques_per_node = np.bincount(sum(n_cliques, []), minlength=num_nodes)
-            gen_distribution[num_nodes][int(np.sum(n_cliques_per_node == 1))][int(num_nodes**2 == num_edges)] += 1 / len(trajs)
+            if num_nodes < 8:
+                gen_distribution[num_nodes][int(np.sum(n_cliques_per_node == 1))][int(num_nodes**2 == num_edges)] += 1
+        gen_distribution /= np.sum(gen_distribution)
         eta = 0.001
         kl = np.sum(np.maximum(eta, tru_distribution) * np.log(np.maximum(eta, tru_distribution) / np.maximum(eta, gen_distribution)))
         np.save("results/meta_fitness.npy", kl)
 
-    print("done.")
+    else:
+        print("done.")

@@ -19,7 +19,7 @@ def get_smoothed_overfit_log_reward(nodes, edges, reward_arg=0.8, alpha=10, **kw
     fully_connectedness = (num_edges - num_nodes**2) ** 2
     return torch.clamp(math.log(reward_arg) * num_nodes - alpha * fully_connectedness, min=-1_000)
 
-def get_cliques_log_reward(nodes, edges, reward_arg=3, m=10, eta=0.000000001, **kwargs):  # reward is ReLU( m * # nodes in exactly 1 n-clique - # edges )
+def get_cliques_log_reward(nodes, edges, reward_arg=3, m=10, eta=0.00000000001, **kwargs):  # reward is ReLU( m * # nodes in exactly 1 n-clique - # edges )
     num_nodes = torch.sum(torch.sum(nodes, dim=2) > 0, dim=1)
     num_edges = torch.sum(edges[:, :, :, 0], dim=(1, 2))
     log_rewards = []
@@ -28,7 +28,7 @@ def get_cliques_log_reward(nodes, edges, reward_arg=3, m=10, eta=0.000000001, **
         g = nx.from_numpy_array(adj_matrix.cpu().numpy(), edge_attr=None)  # does not include create_using=nx.DiGraph, so we convert to an undirected graph
         n_cliques = [c for c in nx.algorithms.clique.find_cliques(g) if len(c) == reward_arg]
         n_cliques_per_node = np.bincount(sum(n_cliques, []), minlength=num_nodes[i])
-        reward = (np.sum(n_cliques_per_node == 1) * m - num_edges[i]) * 1e10 / 300**num_nodes[i]
+        reward = (np.sum(n_cliques_per_node == 1) * m - num_edges[i]) * 1e12 / math.exp(0.6 * num_nodes[i] ** 2 + 1.2 * num_nodes[i])
         reward = max(reward, eta)
         log_rewards.append(math.log(reward))
     return torch.tensor(log_rewards)
@@ -63,11 +63,11 @@ overfit_true_dist = np.array([[[0, 0],       [0, 0], [0, 0], [0, 0],       [0, 0
 cliques_true_dist = np.array([[[0, 0], [0, 0],       [0, 0],       [0, 0],             [0, 0],       [0, 0],       [0, 0],       [0, 0]],
                               [[0, 0], [0, 0],       [0, 0],       [0, 0],             [0, 0],       [0, 0],       [0, 0],       [0, 0]],
                               [[0, 0], [0, 0],       [0, 0],       [0, 0],             [0, 0],       [0, 0],       [0, 0],       [0, 0]],
-                              [[0, 0], [0, 0],       [0, 0],       [0.09136, 0.00042], [0, 0],       [0, 0],       [0, 0],       [0, 0]],
-                              [[0, 0], [0, 0],       [0.01836, 0], [0.02366, 0],       [0, 0],       [0, 0],       [0, 0],       [0, 0]],
-                              [[0, 0], [0.00220, 0], [0.02178, 0], [0.01465, 0],       [0.00208, 0], [0, 0],       [0, 0],       [0, 0]],
-                              [[0, 0], [0.00075, 0], [0.05812, 0], [0.03126, 0],       [0.00587, 0], [0, 0],       [0.00494, 0], [0, 0]],
-                              [[0, 0], [0.00005, 0], [0.38407, 0], [0.24621, 0],       [0.04797, 0], [0.02870, 0], [0.01756, 0], [0, 0]]])
+                              [[0, 0], [0, 0],       [0, 0],       [0.50778, 0.00236], [0, 0],       [0, 0],       [0, 0],       [0, 0]],
+                              [[0, 0], [0, 0],       [0.13825, 0], [0.17818, 0],       [0, 0],       [0, 0],       [0, 0],       [0, 0]],
+                              [[0, 0], [0.00677, 0], [0.06695, 0], [0.04504, 0],       [0.00639, 0], [0, 0],       [0, 0],       [0, 0]],
+                              [[0, 0], [0.00028, 0], [0.02196, 0], [0.01181, 0],       [0.00222, 0], [0, 0],       [0.00187, 0], [0, 0]],
+                              [[0, 0], [0, 0],       [0.00537, 0], [0.00344, 0],       [0.00067, 0], [0.00040, 0], [0.00025, 0], [0, 0]]])
 
 
 class GFNSampler(IterableDataset):

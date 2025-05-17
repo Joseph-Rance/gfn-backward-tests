@@ -4,14 +4,14 @@ import pygad
 import torch
 
 
-SEED = 2
+SEED = 1
 N = 3
 dp = {}
 
-def fitness_func(_ga_instance, weights, solution_idx):
+def fitness_func(_ga_instance, weights, _solution_idx):
     if tuple(weights.tolist()) in dp.keys():
         return dp[tuple(weights.tolist())]
-    weights = torch.tensor(weights) ** N  # high N helps to focus on only a few weights
+    weights = torch.tensor(weights, dtype=torch.float32) ** N  # high N helps to focus on only a few weights
     torch.save(weights / torch.sum(weights), "results/meta_weights.pt")  # this does not normalise: weights are not bounded since they can be negative
     _return_code = subprocess.call(
         f"python src/graph_building/main.py --reward-idx 2 --loss-fn meta --num-batches 5000 --meta-test --seed {SEED} --save", shell=True
