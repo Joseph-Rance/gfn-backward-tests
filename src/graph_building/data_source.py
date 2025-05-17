@@ -254,8 +254,8 @@ class GFNSampler(IterableDataset):
         sample_size = len(nodes)
 
         # update nodes
-        nodes[:, :, 0] += torch.sum(nodes, dim=2) > 0  # increment existing nodes
-        nodes = torch.clamp(nodes, min=self.node_history_bounds[0], max=self.node_history_bounds[1])  # clip node histories to control tree property
+        #nodes[:, :, 0] += torch.sum(nodes, dim=2) > 0  # increment existing nodes
+        #nodes = torch.clamp(nodes, min=self.node_history_bounds[0], max=self.node_history_bounds[1])  # clip node histories to control tree property
 
         prev_len = masks.shape[1]
         next_node = torch.sum(masks, dim=1)

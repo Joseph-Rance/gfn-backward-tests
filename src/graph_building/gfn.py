@@ -35,7 +35,7 @@ def get_embeddings(base_model, nodes, edges, masks, device="cuda"):
 def get_action_probs(
         node_embeddings, edge_embeddings, global_embedding,
         inverse_indices, unique_masks, unique_edges,
-        stop_model, node_model, edge_model,
+        stop_model, node_model, edge_model, n_model=None,
         random_action_prob=0, adjust_random=None, apply_masks=True, max_nodes=8,
         masked_action_value=-80, action_prob_clip_bounds=(-75, 75)
     ):
@@ -148,7 +148,9 @@ def get_loss_to_uniform_backward(
     bck_action_probs = get_action_probs(*raw_embeddings[0], *embedding_structure[0], bck_stop_model, bck_node_model, bck_edge_model, random_action_prob=0, apply_masks=True)
     log_p_b = bck_action_probs[list(range(len(bck_action_probs))), torch.roll(actions, 1, 0)].to(device)  # prob of previous action
 
-    first_graph_idxs = torch.cumsum(traj_lens, 0)
+    final_graph_idxs = torch.cumsum(traj_lens, 0) - 1
+    first_graph_idxs = torch.roll(final_graph_idxs, 1, dims=0)
+    first_graph_idxs[0] = 0
 
     # don't count padding states (kind of wasteful to compute these)
     uniform_p_b[first_graph_idxs] = 0
@@ -174,7 +176,7 @@ def get_get_tb_loss_backward(get_bck_probs, get_bck_loss):
         fwd_action_probs = get_action_probs(*raw_embeddings[0], *embedding_structure[0], fwd_stop_model, fwd_node_model, fwd_edge_model, random_action_prob=0, apply_masks=True)
         log_p_f = fwd_action_probs[list(range(len(fwd_action_probs))), actions]
 
-        log_p_b, info, bck_metrics = get_bck_probs(trajs, traj_lens, actions, raw_embeddings, embedding_structure, bck_models, **kwargs)  # prob of previous action
+        log_p_b, info, bck_metrics = get_bck_probs(trajs, traj_lens, actions, raw_embeddings, embedding_structure, bck_models, device=device, **kwargs)  # prob of previous action
         log_p_b = torch.roll(log_p_b, -1, 0)
 
         final_graph_idxs = torch.cumsum(traj_lens, 0) - 1
@@ -188,7 +190,7 @@ def get_get_tb_loss_backward(get_bck_probs, get_bck_loss):
         traj_log_p_b = scatter(log_p_b.to(device), batch_idx, dim=0, dim_size=traj_lens.shape[0], reduce="sum")
 
         log_rewards = log_rewards.to(device)
-        bck_loss_vec, replacement_backward = get_bck_loss(log_z, traj_log_p_f, log_rewards, traj_log_p_b, info, **kwargs)
+        bck_loss_vec, replacement_backward = get_bck_loss(log_z, traj_log_p_f, log_rewards, traj_log_p_b, info, device=device, **kwargs)
         bck_loss = bck_loss_vec.mean()
         traj_log_p_b = traj_log_p_b.detach()
 

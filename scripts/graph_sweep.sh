@@ -12,38 +12,38 @@ cp -r results results_graph_uniform_4
 python src/graph_building/main.py --loss-fn tb-uniform --seed 1 --save --reward-idx 0 --log-z 10.00 --depth 2 --num-features 8
 cp -r results results_graph_uniform_5
 python src/graph_building/main.py --loss-fn tb-tlm --seed 1 --save --reward-idx 2  # TODO*
-cp results/models/fwd_stop_model_4999.pt backward/0/fwd_stop_model.pt
-cp results/models/fwd_stop_model_4999.pt backward/0/base_model.pt
-cp results/models/fwd_stop_model_4999.pt backward/0/fwd_node_model.pt
-cp results/models/fwd_stop_model_4999.pt backward/0/fwd_edge_model.pt
-cp results/models/fwd_stop_model_9999.pt backward/1/fwd_stop_model.pt
-cp results/models/fwd_stop_model_9999.pt backward/1/base_model.pt
-cp results/models/fwd_stop_model_9999.pt backward/1/fwd_node_model.pt
-cp results/models/fwd_stop_model_9999.pt backward/1/fwd_edge_model.pt
+cp results/models/4999_bck_stop_model.pt backward/0/bck_stop_model.pt
+cp results/models/4999_base_model.pt backward/0/base_model.pt
+cp results/models/4999_bck_node_model.pt backward/0/bck_node_model.pt
+cp results/models/4999_bck_edge_model.pt backward/0/bck_edge_model.pt
+cp results/models/9999_bck_stop_model.pt backward/1/bck_stop_model.pt
+cp results/models/9999_base_model.pt backward/1/base_model.pt
+cp results/models/9999_bck_node_model.pt backward/1/bck_node_model.pt
+cp results/models/9999_bck_edge_model.pt backward/1/bck_edge_model.pt
 cp -r results results_graph_tlm_0
 python src/graph_building/main.py --loss-fn tb-tlm --seed 2 --save --reward-idx 2
-cp results/models/fwd_stop_model_4999.pt backward/2/fwd_stop_model.pt
-cp results/models/fwd_stop_model_4999.pt backward/2/base_model.pt
-cp results/models/fwd_stop_model_4999.pt backward/2/fwd_node_model.pt
-cp results/models/fwd_stop_model_4999.pt backward/2/fwd_edge_model.pt
-cp results/models/fwd_stop_model_9999.pt backward/3/fwd_stop_model.pt
-cp results/models/fwd_stop_model_9999.pt backward/3/base_model.pt
-cp results/models/fwd_stop_model_9999.pt backward/3/fwd_node_model.pt
-cp results/models/fwd_stop_model_9999.pt backward/3/fwd_edge_model.pt
+cp results/models/4999_bck_stop_model.pt backward/2/bck_stop_model.pt
+cp results/models/4999_base_model.pt backward/2/base_model.pt
+cp results/models/4999_bck_node_model.pt backward/2/bck_node_model.pt
+cp results/models/4999_bck_edge_model.pt backward/2/bck_edge_model.pt
+cp results/models/9999_bck_stop_model.pt backward/3/bck_stop_model.pt
+cp results/models/9999_base_model.pt backward/3/base_model.pt
+cp results/models/9999_bck_node_model.pt backward/3/bck_node_model.pt
+cp results/models/9999_bck_edge_model.pt backward/3/bck_edge_model.pt
 cp -r results results_graph_tlm_1
 python src/graph_building/main.py --loss-fn tb-tlm --seed 1 --save --reward-idx 0 --depth 2 --num-features 8  # TODO*
 cp -r results results_graph_tlm_2
 python src/graph_building/main.py --loss-fn tb-tlm --seed 2 --save --reward-idx 0 --depth 2 --num-features 8
 cp -r results results_graph_tlm_3
 python src/graph_building/main.py --loss-fn tb-tlm --seed 1 --save --reward-idx 2 --log-z 16.97
-cp results/models/fwd_stop_model_4999.pt backward/4/fwd_stop_model.pt
-cp results/models/fwd_stop_model_4999.pt backward/4/base_model.pt
-cp results/models/fwd_stop_model_4999.pt backward/4/fwd_node_model.pt
-cp results/models/fwd_stop_model_4999.pt backward/4/fwd_edge_model.pt
-cp results/models/fwd_stop_model_9999.pt backward/5/fwd_stop_model.pt
-cp results/models/fwd_stop_model_9999.pt backward/5/base_model.pt
-cp results/models/fwd_stop_model_9999.pt backward/5/fwd_node_model.pt
-cp results/models/fwd_stop_model_9999.pt backward/5/fwd_edge_model.pt
+cp results/models/4999_bck_stop_model.pt backward/4/bck_stop_model.pt
+cp results/models/4999_base_model.pt backward/4/base_model.pt
+cp results/models/4999_bck_node_model.pt backward/4/bck_node_model.pt
+cp results/models/4999_bck_edge_model.pt backward/4/bck_edge_model.pt
+cp results/models/9999_bck_stop_model.pt backward/5/bck_stop_model.pt
+cp results/models/9999_base_model.pt backward/5/base_model.pt
+cp results/models/9999_bck_node_model.pt backward/5/bck_node_model.pt
+cp results/models/9999_bck_edge_model.pt backward/5/bck_edge_model.pt
 cp -r results results_graph_tlm_4
 python src/graph_building/main.py --loss-fn tb-const --seed 1 --save --reward-idx 2 --loss-arg-a 0.2  # TODO*
 cp -r results results_graph_const_0
@@ -97,7 +97,7 @@ python src/graph_building/main.py --loss-fn tb-biased-tlm --seed 1 --save --rewa
 cp -r results results_graph_biased_3
 
 # can we encourage a complete solution?
-python src/graph_building/main.py --loss-fn tb-aligned --save --reward-idx 2  # TODO*
+python src/graph_building/main.py --loss-fn tb-aligned --seed 1 --save --reward-idx 0  # TODO*
 cp -r results results_graph_aligned_0
 
 # how much connectivity do we need for p_b to matter?
@@ -105,33 +105,33 @@ python src/graph_building/main.py --loss-fn tb-uniform --seed 1 --save --reward-
 cp -r results results_graph_uniform_6
 python src/graph_building/main.py --loss-fn tb-tlm --seed 1 --save --reward-idx 2 --history-bounds 2  # TODO*
 cp -r results results_graph_tlm_5
-python src/graph_building/main.py --loss-fn tb-uniform-action-mult --seed 1 --save --reward-idx 2 --history-bounds 2 --loss-arg-a 1 --loss-arg-b 0.1
+python src/graph_building/main.py --loss-fn tb-uniform-action-mult --seed 1 --save --reward-idx 2 --history-bounds 2 --loss-arg-a 1 --loss-arg-b 0.10
 cp -r results results_graph_mult_17
 python src/graph_building/main.py --loss-fn tb-uniform-action-mult --seed 1 --save --reward-idx 2 --history-bounds 2 --loss-arg-a 1 --loss-arg-b 2.00
 cp -r results results_graph_mult_18
-python src/graph_building/main.py --loss-fn tb-aligned --seed 1 --save --reward-idx 2 --history-bounds 2
+python src/graph_building/main.py --loss-fn tb-aligned --seed 1 --save --reward-idx 0 --history-bounds 2  # TODO*
 cp -r results results_graph_aligned_1
 python src/graph_building/main.py --loss-fn tb-uniform --seed 1 --save --reward-idx 2 --history-bounds 4  # TODO*
 cp -r results results_graph_uniform_6
 python src/graph_building/main.py --loss-fn tb-tlm --seed 1 --save --reward-idx 2 --history-bounds 4  # TODO*
 cp -r results results_graph_tlm_6
-python src/graph_building/main.py --loss-fn tb-uniform-action-mult --seed 1 --save --reward-idx 2 --history-bounds 4 --loss-arg-a 1 --loss-arg-b 0.1
-cp -r results results_graph_mult_18
+python src/graph_building/main.py --loss-fn tb-uniform-action-mult --seed 1 --save --reward-idx 2 --history-bounds 4 --loss-arg-a 1 --loss-arg-b 0.10
+cp -r results results_graph_mult_19
 python src/graph_building/main.py --loss-fn tb-uniform-action-mult --seed 1 --save --reward-idx 2 --history-bounds 4 --loss-arg-a 1 --loss-arg-b 2.00
 cp -r results results_graph_mult_20
-python src/graph_building/main.py --loss-fn tb-aligned --seed 1 --save --reward-idx 2 --history-bounds 4
+python src/graph_building/main.py --loss-fn tb-aligned --seed 1 --save --reward-idx 0 --history-bounds 4  # TODO*
 cp -r results results_graph_aligned_2
 
 # generate surface
 python src/graph_building/main.py --loss-fn tb-tlm --seed 3 --save --reward-idx 2
-cp results/models/fwd_stop_model_4999.pt backward/6/fwd_stop_model.pt
-cp results/models/fwd_stop_model_4999.pt backward/6/base_model.pt
-cp results/models/fwd_stop_model_4999.pt backward/6/fwd_node_model.pt
-cp results/models/fwd_stop_model_4999.pt backward/6/fwd_edge_model.pt
-cp results/models/fwd_stop_model_9999.pt backward/7/fwd_stop_model.pt
-cp results/models/fwd_stop_model_9999.pt backward/7/base_model.pt
-cp results/models/fwd_stop_model_9999.pt backward/7/fwd_node_model.pt
-cp results/models/fwd_stop_model_9999.pt backward/7/fwd_edge_model.pt
+cp results/models/4999_bck_stop_model.pt backward/6/bck_stop_model.pt
+cp results/models/4999_base_model.pt backward/6/base_model.pt
+cp results/models/4999_bck_node_model.pt backward/6/bck_node_model.pt
+cp results/models/4999_bck_edge_model.pt backward/6/bck_edge_model.pt
+cp results/models/9999_bck_stop_model.pt backward/7/bck_stop_model.pt
+cp results/models/9999_base_model.pt backward/7/base_model.pt
+cp results/models/9999_bck_node_model.pt backward/7/bck_node_model.pt
+cp results/models/9999_bck_edge_model.pt backward/7/bck_edge_model.pt
 cp -r results results_graph_tlm_7
 python src/graph_building/main.py --loss-fn tb-frozen --seed 1 --save --reward-idx 2 --backward-init backward/0  # TODO*
 cp -r results results_graph_frozen_0

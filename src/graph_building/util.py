@@ -7,10 +7,10 @@ def get_num_previous_acts(state):  # (incorrect for starting state)
     nodes, edges, mask = state
     if nodes[0, -1].item() == 1:
         return 1
-    edges = edges[mask][:, mask, 0]  # is this necessary?
+    edges = edges[mask][:, mask, 1]  # is this necessary?
     num_nodes = torch.sum(torch.sum(nodes, dim=1) > 0, dim=0)
     has_disconnected = (torch.sum(edges[:, num_nodes-1]) == 0 and torch.sum(edges[num_nodes-1, :]) == 0).item()
-    return torch.sum(edges, dim=(0, 1)) + has_disconnected
+    return torch.sum((edges == 1), dim=(0, 1)) + has_disconnected
 
 def adjust_action_idxs(action_idxs, pre_padding_lens, post_padding_len):
     for i in range(len(action_idxs)):
@@ -21,10 +21,14 @@ def adjust_action_idxs(action_idxs, pre_padding_lens, post_padding_len):
     return action_idxs
 
 @torch.no_grad()
-def is_n_connected(nodes, edges, _mask, ns=[3]):
-    num_nodes = torch.sum(torch.sum(nodes, dim=1) > 0, dim=1)
-    num_edges = torch.sum(edges[:, :, 0], dim=(0, 1))
-    return num_nodes in ns and num_edges == num_nodes**2
+def is_n_connected(nodes, edges, _mask, ns=[3], connected=True):
+    num_nodes = torch.sum(torch.sum(nodes, dim=1) > 0, dim=0)
+
+    if not connected:
+        return num_nodes in ns
+    else:
+        num_edges = torch.sum(edges[:, :, 0], dim=(0, 1))
+        return num_nodes in ns and num_edges == num_nodes**2
 
 @torch.no_grad()
 def get_aligned_action_log_prob(nodes, edges, _mask, action_idx, reward_idx=1, reward_arg=0.8, correct_prob=0.99, incorrect_prob=0.01, max_nodes=10):

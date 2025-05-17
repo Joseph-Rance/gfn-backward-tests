@@ -6,6 +6,7 @@ import random
 import time
 import pickle
 import sys
+from tqdm import tqdm
 import numpy as np
 import networkx as nx
 import torch
@@ -102,7 +103,7 @@ configs = {
     "tb-biased-tlm": (biased_tlm, {"parameterise_backward": True, "args": {"multiplier": args.loss_arg_a, "ns": [args.loss_arg_b]}}),  # TLM / pessimistic with weights toward ns nodes
     "tb-max-ent": (max_ent, {"parameterise_backward": True, "args": {}}),  # maximum entropy backward policy
     "tb-loss-aligned": (loss_aligned, {"parameterise_backward": False, "args": {"iters": args.loss_arg_a, "std_mult": args.loss_arg_b}}),  # aligned to loss-based backward policy
-    "meta": (meta, {"parameterise_backward": False, "args": {"weights": torch.load("results/meta_weights.pt") if args.meta_test else None, "reward_arg": args.reward_arg}})  # for meta learning
+    "meta": (meta, {"parameterise_backward": True, "args": {"weights": torch.load("results/meta_weights.pt") if args.meta_test else None, "reward_arg": args.reward_arg}})  # for meta learning
 }
 
 backward, config = configs[args.loss_fn]
@@ -136,15 +137,15 @@ if parameterise_backward:
         main_init_optimiser = torch.optim.Adam(base_models[0].parameters(), lr=args.learning_rate, weight_decay=1e-4)
 
         # its kind of wasteful that we call fwd_models here even though the actions are random
-        init_data_source = GFNSampler(base_models[0], *fwd_models, lambda nodes, *args, **kwargs: torch.zeros((nodes.shape[0],)),
+        init_data_source = GFNSampler(base_models[0], *fwd_models, get_reward_fn_generator((lambda nodes, *args, **kwargs: torch.zeros((nodes.shape[0],)))),
                                       random_action_prob=1, node_features=args.num_features, edge_features=args.num_features,
-                                      max_len=args.max_len, max_nodes=args.max_nodes, batch_size=64, num_precomputed=0, device=args.device)
+                                      max_len=args.max_nodes*(args.max_nodes+1), max_nodes=args.max_nodes, batch_size=64, num_precomputed=0,
+                                      device=args.device)
 
-                                      
         data_loader = torch.utils.data.DataLoader(init_data_source, batch_size=None)
-        for it, (jagged_trajs, log_rewards) in zip(range(25), data_loader):
+        for it, (jagged_trajs, log_rewards) in tqdm(list(zip(range(25), data_loader))):
 
-            loss, metrics = get_loss_to_uniform_backward(jagged_trajs, log_rewards, base_models[0], None, *fwd_models, *bck_models, constant_log_z=1, device=args.device)
+            loss = get_loss_to_uniform_backward(jagged_trajs, log_rewards, base_models, None, *fwd_models, *bck_models, constant_log_z=1, device=args.device)
             loss.backward()
 
             main_init_optimiser.step()
@@ -213,9 +214,9 @@ if __name__ == "__main__":
     train_time = test_time = 0
     graphs_above_threshold, prev_graphs_above_threshold = set(), 0
 
-    for it, (jagged_trajs, log_rewards) in zip(range(args.num_batches), data_loader):
+    train_time -= time.perf_counter()
 
-        train_time -= time.perf_counter()
+    for it, (jagged_trajs, log_rewards) in zip(range(args.num_batches), data_loader):
 
         loss, curr_metrics = get_loss(jagged_trajs, log_rewards, base_models, log_z_model, *fwd_models, *bck_models, constant_log_z=args.log_z, device=args.device)
         loss.backward()
@@ -383,6 +384,7 @@ if __name__ == "__main__":
 
                 test_time += time.perf_counter()
                 generated_metrics["train_time"], generated_metrics["test_time"] = train_time / (it + 1), test_time / (it + 1)
+                test_time -= time.perf_counter()
 
                 metrics = {"iteration": it} | train_metrics | template_metrics | generated_metrics
                 train_metrics = {}
@@ -408,7 +410,7 @@ if __name__ == "__main__":
                                      *(("n_model", "log_z_model") if args.loss_fn == "tb-max-ent" else ("log_z_model",))]):
                         torch.save(m.state_dict(), f"results/models/{it}_{f}.pt")
 
-                print(f"{metrics['iteration']:>5} [{generated_metrics['train_time']:4.1f}+{generated_metrics['test_time']:3.1f}]: " \
+                print(f"{metrics['iteration']:>5} [{generated_metrics['train_time']*20:4.1f}+{generated_metrics['test_time']*20:3.1f}]: " \
                       f"{metrics['lr']:5.0e} {metrics['random_prob']:5.2f} | " \
                       f"loss: {metrics['train_loss']:7.2f} (f: {metrics['train_tb_loss']:7.2f}, b: {metrics['train_bck_loss']:7.2f}) " \
                       f"conn: {metrics['generated_connectivity_mean']:3.1f} r: {metrics['generated_log_rewards_mean']:8.3f} js: {metrics['generated_js']:8.5f} " \
@@ -416,6 +418,8 @@ if __name__ == "__main__":
                       f'''#n: {", ".join([f"{i}:{metrics['generated_num_nodes'][i]:4.2f}" for i in range(1, 9)])} ''' \
                       f"(n: {metrics['generated_num_nodes_mean']:3.1f} e: {metrics['generated_num_edges_mean']:3.1f}) " \
                       f'''#c: {", ".join([f"{i}:{metrics['generated_clique_size'][i]:4.2f}" for i in range(1, 9)])}''')
+
+                test_time += time.perf_counter()
 
         if (it+1) % 50 == 0:
             data_source.random_action_prob = max(random_prob_min, data_source.random_action_prob * random_prob_decay)
@@ -429,6 +433,8 @@ if __name__ == "__main__":
                 n_model = compile_model(nn.Sequential(nn.Linear(args.num_features, args.num_features*2), nn.LeakyReLU(), nn.Linear(args.num_features*2, 1))).to(args.device)
                 bck_models.append(n_model)
             bck_optimiser = torch.optim.Adam(itertools.chain(*(i.parameters() for i in bck_models)), lr=args.learning_rate*10, weight_decay=1e-4)
+
+        train_time -= time.perf_counter()
 
     if args.meta_test:
         gen_distribution = np.array([[[0 for _connectivity in range(2)] for _num_nodes_in_one_n_clique in range(7+1)] for _num_nodes in range(7+1)])
