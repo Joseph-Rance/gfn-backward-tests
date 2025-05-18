@@ -10,7 +10,7 @@ def get_num_previous_acts(state):  # (incorrect for starting state)
     edges = edges[mask][:, mask, 1]  # is this necessary?
     num_nodes = torch.sum(torch.sum(nodes, dim=1) > 0, dim=0)
     has_disconnected = (torch.sum(edges[:, num_nodes-1]) == 0 and torch.sum(edges[num_nodes-1, :]) == 0).item()
-    return torch.sum((edges == 1), dim=(0, 1)) + has_disconnected
+    return max(1, torch.sum((edges == 1), dim=(0, 1)) + has_disconnected)  # max is required because sometimes we select an illegal action and would return 0
 
 def adjust_action_idxs(action_idxs, pre_padding_lens, post_padding_len):
     for i in range(len(action_idxs)):

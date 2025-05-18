@@ -112,7 +112,7 @@ parameterise_backward = config["parameterise_backward"]
 
 reward_fns = [get_uniform_counting_log_reward, get_smoothed_overfit_log_reward, get_cliques_log_reward]
 reward_fn = reward_fns[args.reward_idx]
-high_reward_threshold = (-10, -0.8, 2.8)[args.reward_idx]
+high_reward_threshold = (-1, -0.8, 2.8)[args.reward_idx]
 tru_distribution = (uniform_true_dist, overfit_true_dist, cliques_true_dist)[args.reward_idx]
 
 #compile_model = lambxa x: torch.compile(x)
@@ -134,16 +134,16 @@ if parameterise_backward:
     if args.backward_init == "uniform":
 
         bck_init_optimiser = torch.optim.Adam(itertools.chain(*(i.parameters() for i in bck_models)), lr=args.learning_rate*10, weight_decay=1e-4)
-        main_init_optimiser = torch.optim.Adam(base_models[0].parameters(), lr=args.learning_rate, weight_decay=1e-4)
+        main_init_optimiser = torch.optim.Adam(base_models[0].parameters(), lr=args.learning_rate*10, weight_decay=1e-4)
 
         # its kind of wasteful that we call fwd_models here even though the actions are random
         init_data_source = GFNSampler(base_models[0], *fwd_models, get_reward_fn_generator((lambda nodes, *args, **kwargs: torch.zeros((nodes.shape[0],)))),
                                       random_action_prob=1, node_features=args.num_features, edge_features=args.num_features,
-                                      max_len=args.max_nodes*(args.max_nodes+1), max_nodes=args.max_nodes, batch_size=64, num_precomputed=0,
+                                      max_len=args.max_nodes*(args.max_nodes+1), max_nodes=args.max_nodes, batch_size=1024, num_precomputed=0,
                                       device=args.device)
 
         data_loader = torch.utils.data.DataLoader(init_data_source, batch_size=None)
-        for it, (jagged_trajs, log_rewards) in tqdm(list(zip(range(25), data_loader))):
+        for it, (jagged_trajs, log_rewards) in tqdm(list(zip(range(50), data_loader))):
 
             loss = get_loss_to_uniform_backward(jagged_trajs, log_rewards, base_models, None, *fwd_models, *bck_models, constant_log_z=1, device=args.device)
             loss.backward()
@@ -186,7 +186,7 @@ log_z_optimiser = torch.optim.Adam(log_z_model.parameters(), lr=args.learning_ra
 #log_z_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(log_z_optimiser, patience=1_000)
 
 if parameterise_backward:
-    bck_optimiser = torch.optim.Adam(itertools.chain(*(i.parameters() for i in bck_models)), lr=args.learning_rate*10, weight_decay=1e-4)
+    bck_optimiser = torch.optim.Adam(itertools.chain(*(i.parameters() for i in bck_models)), lr=args.learning_rate, weight_decay=1e-4)
     #bck_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(bck_optimiser, patience=1_000)
 
     # in case we pretrained the backward policy
@@ -211,10 +211,9 @@ if __name__ == "__main__":
     torch.backends.cudnn.benchmark = True
 
     train_metrics = {}
-    train_time = test_time = 0
     graphs_above_threshold, prev_graphs_above_threshold = set(), 0
-
-    train_time -= time.perf_counter()
+    train_time = -time.perf_counter()
+    test_time = 0
 
     for it, (jagged_trajs, log_rewards) in zip(range(args.num_batches), data_loader):
 
@@ -247,9 +246,9 @@ if __name__ == "__main__":
 
         train_metrics["train_norm"] = train_metrics.get("train_norm", 0) + norm / args.cycle_len
 
-        with torch.no_grad():  # metrics (move this to a new file)
+        train_time += time.perf_counter()
 
-            train_time += time.perf_counter()
+        with torch.no_grad():  # metrics (move this to a new file)
 
             if args.cycle_len > 0 and (it+1)%args.cycle_len == 0:
 
@@ -308,7 +307,8 @@ if __name__ == "__main__":
                                                                                    base_models, fwd_models, bck_models, args.log_z, log_z_model,
                                                                                    *backward, **config["args"], device=args.device)
                     for k,v in curr_metrics.items():
-                        generated_metrics[f"generated_{k}"] = generated_metrics.get(f"generated_{k}", 0) + v / args.num_test_graphs  # (could save some divides here)
+                        # could save some divides here; assumes no small batch at the end
+                        generated_metrics[f"generated_{k}"] = generated_metrics.get(f"generated_{k}", 0) + v / math.ceil(len(trajs) / args.batch_size)
 
                     # might also be interesting to check the order that edges are added
                     actions = torch.tensor([a for t in batch_trajs for _s, a in t[:-1]])
@@ -343,7 +343,7 @@ if __name__ == "__main__":
 
                     num_cliques.append(len(cliques))
                     num_n_cliques.append(len(n_cliques))
-                    num_n_cliques_per_node.append(n_cliques_per_node.mean())
+                    num_n_cliques_per_node += n_cliques_per_node.tolist()
 
                     for size, count in collections.Counter([len(c) for c in cliques]).items():
                         clique_size_dist[size] += count / len(graphs)
@@ -351,7 +351,7 @@ if __name__ == "__main__":
                     if num_nodes[-1] < 8:  # don't test for more than 7 nodes because it is too expensive to brute force and too much effort to work out analytically
                         gen_distribution[num_nodes[-1]][int(np.sum(n_cliques_per_node == 1))][int(num_nodes[-1]**2 == num_edges[-1])] += 1
 
-                gen_distribution /= np.sum(gen_distribution)
+                gen_distribution /= max(0.01, np.sum(gen_distribution))  # -> 0.01 if all graphs have >7 nodes
 
                 num_nodes_dist_counter = collections.Counter(num_nodes)
                 generated_metrics["generated_num_nodes"] = [num_nodes_dist_counter[i] / len(num_nodes) for i in range(args.max_nodes+1)]
@@ -372,21 +372,22 @@ if __name__ == "__main__":
 
                 eta = 0.001
                 # https://en.wikipedia.org/wiki/Kolmogorov%E2%80%93Smirnov_test
-                ks = np.max(np.abs(np.cumsum(gen_distribution) - np.cumsum(tru_distribution)))
+                ks = np.max(np.abs(np.cumsum(gen_distribution) - np.cumsum(tru_distribution))).item()
                 # https://en.wikipedia.org/wiki/Kullback%E2%80%93Leibler_divergence (KL(true || gen))
-                kl = np.sum(np.maximum(eta, tru_distribution) * np.log(np.maximum(eta, tru_distribution) / np.maximum(eta, gen_distribution)))
+                kl = np.sum(np.maximum(eta, tru_distribution) * np.log(np.maximum(eta, tru_distribution) / np.maximum(eta, gen_distribution))).item()
                 # https://en.wikipedia.org/wiki/Jensen%E2%80%93Shannon_divergence (questionable usefulness here?)
                 m_distribution = (tru_distribution + gen_distribution) / 2
-                js = (np.sum(np.maximum(eta, tru_distribution) * np.log(np.maximum(eta, tru_distribution) / np.maximum(eta, m_distribution))) \
-                    + np.sum(np.maximum(eta, gen_distribution) * np.log(np.maximum(eta, gen_distribution) / np.maximum(eta, m_distribution)))) / 2
+                js = ((np.sum(np.maximum(eta, tru_distribution) * np.log(np.maximum(eta, tru_distribution) / np.maximum(eta, m_distribution))) \
+                       + np.sum(np.maximum(eta, gen_distribution) * np.log(np.maximum(eta, gen_distribution) / np.maximum(eta, m_distribution)))) / 2).item()
 
                 generated_metrics["generated_ks"], generated_metrics["generated_kl"], generated_metrics["generated_js"] = ks, kl, js
                 generated_metrics["ens_0"], generated_metrics["ens_1"] = data_source.get_log_unnormalised_ens(), data_source.get_log_unnormalised_ens(refl=True)
                 generated_metrics["lr"], generated_metrics["random_prob"] = main_optimiser.param_groups[0]['lr'], data_source.random_action_prob
 
                 test_time += time.perf_counter()
-                generated_metrics["train_time"], generated_metrics["test_time"] = train_time / (it + 1), test_time / (it + 1)
-                test_time -= time.perf_counter()
+                generated_metrics["train_time"], generated_metrics["test_time"] = train_time / args.cycle_len, test_time / args.cycle_len
+                train_time = 0
+                test_time = -time.perf_counter()
 
                 metrics = {"iteration": it} | train_metrics | template_metrics | generated_metrics
                 train_metrics = {}
@@ -412,16 +413,18 @@ if __name__ == "__main__":
                                      *(("n_model", "log_z_model") if args.loss_fn == "tb-max-ent" else ("log_z_model",))]):
                         torch.save(m.state_dict(), f"results/models/{it}_{f}.pt")
 
-                print(f"{metrics['iteration']:>5} [{generated_metrics['train_time']*20:4.1f}+{generated_metrics['test_time']*20:4.1f}]: " \
+                print(f"{metrics['iteration']:>5} [{metrics['train_time']*20:4.1f}+{metrics['test_time']*20:4.1f}]: " \
                       f"{metrics['lr']:5.0e} {metrics['random_prob']:5.2f} | " \
                       f"loss: {metrics['train_loss']:7.2f} (f: {metrics['train_tb_loss']:7.2f}, b: {metrics['train_bck_loss']:7.2f}) " \
                       f"conn: {metrics['generated_connectivity_mean']:3.1f} r: {metrics['generated_log_rewards_mean']:8.3f} js: {metrics['generated_js']:8.5f} " \
                       f"new: {metrics['new_graphs_above_threshold'] / (args.cycle_len * args.batch_size):5.3f} " \
                       f'''#n: {", ".join([f"{i}:{metrics['generated_num_nodes'][i]:4.2f}" for i in range(1, 9)])} ''' \
-                      f"(n: {metrics['generated_num_nodes_mean']:3.1f} e: {metrics['generated_num_edges_mean']:3.1f}) " \
+                      f"(n: {metrics['generated_num_nodes_mean']:3.1f} e: {metrics['generated_num_edges_mean']:4.1f}) " \
                       f'''#c: {", ".join([f"{i}:{metrics['generated_clique_size'][i]:4.2f}" for i in range(1, 9)])}''')
 
                 test_time += time.perf_counter()
+
+        train_time -= time.perf_counter()
 
         if (it+1) % 50 == 0:
             data_source.random_action_prob = max(random_prob_min, data_source.random_action_prob * random_prob_decay)
@@ -434,9 +437,7 @@ if __name__ == "__main__":
             if args.loss_fn == "tb-max-ent":
                 n_model = compile_model(nn.Sequential(nn.Linear(args.num_features, args.num_features*2), nn.LeakyReLU(), nn.Linear(args.num_features*2, 1))).to(args.device)
                 bck_models.append(n_model)
-            bck_optimiser = torch.optim.Adam(itertools.chain(*(i.parameters() for i in bck_models)), lr=args.learning_rate*10, weight_decay=1e-4)
-
-        train_time -= time.perf_counter()
+            bck_optimiser = torch.optim.Adam(itertools.chain(*(i.parameters() for i in bck_models)), lr=args.learning_rate, weight_decay=1e-4)
 
     if args.meta_test:
         gen_distribution = np.array([[[0 for _connectivity in range(2)] for _num_nodes_in_one_n_clique in range(7+1)] for _num_nodes in range(7+1)], dtype=float)
@@ -450,7 +451,7 @@ if __name__ == "__main__":
             n_cliques_per_node = np.bincount(sum(n_cliques, []), minlength=num_nodes)
             if num_nodes < 8:
                 gen_distribution[num_nodes][int(np.sum(n_cliques_per_node == 1))][int(num_nodes**2 == num_edges)] += 1
-        gen_distribution /= np.sum(gen_distribution)
+        gen_distribution /= max(0.01, np.sum(gen_distribution))  # -> 0.01 if all graphs have >7 nodes
         eta = 0.001
         kl = np.sum(np.maximum(eta, tru_distribution) * np.log(np.maximum(eta, tru_distribution) / np.maximum(eta, gen_distribution)))
         np.save("results/meta_fitness.npy", kl)

@@ -143,7 +143,7 @@ def get_loss_to_uniform_backward(
     ):
 
     trajs = [action for traj in jagged_trajs for action in traj]
-    uniform_p_b = torch.tensor([math.log(get_num_previous_acts(s)) for s, _a in trajs], device=device)
+    uniform_p_b = torch.tensor([math.log(get_num_previous_acts(s)) for s, _a in trajs], device=device).detach()
 
     bck_action_probs = get_action_probs(*raw_embeddings[0], *embedding_structure[0], bck_stop_model, bck_node_model, bck_edge_model, random_action_prob=0, apply_masks=True)
     log_p_b = bck_action_probs[list(range(len(bck_action_probs))), torch.roll(actions, 1, 0)].to(device)  # prob of previous action
@@ -269,5 +269,6 @@ def get_metrics(nodes, edges, masks, actions, traj_lens, log_rewards,
         "combined_loss_mean": loss.mean().item(),
         "combined_loss_std": loss.std().item(),
         "bck_loss_mean": bck_loss.mean().item(),
-        "bck_loss_std": bck_loss.std().item()
+        "bck_loss_std": bck_loss.std().item(),
+        "checksum": 1.
     }, fwd_action_probs, log_p_b)  # not worth it to predict probabilities of backward actions as it is expensive and we often don't have to
