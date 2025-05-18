@@ -101,7 +101,7 @@ python src/graph_building/main.py --loss-fn tb-aligned --seed 1 --save --reward-
 cp -r results results_graph_aligned_0
 
 # how much connectivity do we need for p_b to matter?
-python src/graph_building/main.py --loss-fn tb-uniform --seed 1 --save --reward-idx 2 --history-bounds 2
+python src/graph_building/main.py --loss-fn tb-uniform --seed 1 --save --reward-idx 2 --history-bounds 2  # TODO *
 cp -r results results_graph_uniform_6
 python src/graph_building/main.py --loss-fn tb-tlm --seed 1 --save --reward-idx 2 --history-bounds 2
 cp -r results results_graph_tlm_5
