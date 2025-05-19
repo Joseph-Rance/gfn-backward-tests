@@ -4,9 +4,9 @@
 #SBATCH -p ampere
 #SBATCH --gres=gpu:1
 
-conda activate main
-
 cd /rds/user/jr879/hpc-work
+
+source anaconda3/bin/activate main
 
 echo "training template models"
 
