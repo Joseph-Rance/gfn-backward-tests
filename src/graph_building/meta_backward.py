@@ -10,6 +10,7 @@ N = 3
 dp = {}
 
 def fitness_func(_ga_instance, weights, solution_idx):
+    print(solution_idx)
     if tuple(weights.tolist()) in dp.keys():
         return dp[tuple(weights.tolist())]
     weights = torch.tensor(weights, dtype=torch.float32) ** N  # high N helps to focus on only a few weights
