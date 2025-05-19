@@ -13,7 +13,3 @@ python src/graph_building/main.py --loss-fn tb-biased-tlm --seed 1 --save --rewa
 cp -r results results_graph_biased_0
 python src/graph_building/main.py --loss-fn tb-max-ent --seed 1 --save --reward-idx 2
 cp -r results results_graph_max_ent_0
-python src/graph_building/main.py --loss-fn tb-max-ent --seed 2 --save --reward-idx 2
-cp -r results results_graph_max_ent_1
-python src/graph_building/main.py --loss-fn tb-soft-tlm --seed 1 --save --reward-idx 2 --loss-arg-a 0.5
-cp -r results results_graph_max_soft_0

@@ -46,6 +46,9 @@ with open("results/experiment_config.sh", "w") as f:
     f.write(" ".join(sys.argv))
 print(" ".join(sys.argv))
 
+torch.cuda.set_per_process_memory_fraction(0.2, 0)
+torch.cuda.empty_cache()
+
 parser = argparse.ArgumentParser()
 
 # general

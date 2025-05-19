@@ -13,7 +13,3 @@ python src/graph_building/main.py --loss-fn tb-aligned --seed 1 --save --reward-
 cp -r results results_graph_aligned_0
 python src/graph_building/main.py --loss-fn tb-uniform-rand --seed 1 --save --reward-idx 2 --loss-arg-a 0.125
 cp -r results results_graph_max_rand_0
-python src/graph_building/main.py --loss-fn tb-uniform-rand --seed 1 --save --reward-idx 2 --loss-arg-a 0.25
-cp -r results results_graph_max_rand_1
-python src/graph_building/main.py --loss-fn tb-loss-aligned --seed 1 --save --reward-idx 2 --loss-arg-a 20 --loss-arg-b 0.1
-cp -r results results_graph_max_loss_0

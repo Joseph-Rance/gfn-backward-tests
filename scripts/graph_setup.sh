@@ -1,5 +1,7 @@
 #!/bin/sh
 
+# cd a; git clone https://github.com/Joseph-Rance/gfn-backward-tests.git; cd gfn-backward-tests; mkdir results; cd results; mkdir embeddings metrics models batches s m; cd ..; mkdir backward; cd backward; mkdir 0 1 2 3 4 5 6 7; cd ..; cp ../../template.npy results/s/template.npy; cd ../..
+
 #wget https://repo.anaconda.com/archive/Anaconda3-2024.10-1-Linux-x86_64.sh
 #bash Anaconda3-2024.10-1-Linux-x86_64.sh
 #conda create -n main python=3.10

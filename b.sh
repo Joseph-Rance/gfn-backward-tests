@@ -21,7 +21,3 @@ python src/graph_building/main.py --loss-fn tb-uniform-action-mult --seed 2 --sa
 cp -r results results_graph_mult_8
 python src/graph_building/main.py --loss-fn tb-uniform-action-mult --seed 1 --save --reward-idx 2 --history-bounds 2 --loss-arg-a 1 --loss-arg-b 0.10
 cp -r results results_graph_mult_17
-python src/graph_building/main.py --loss-fn tb-uniform-action-mult --seed 1 --save --reward-idx 2 --history-bounds 2 --loss-arg-a 1 --loss-arg-b 2.00
-cp -r results results_graph_mult_18
-python src/graph_building/main.py --loss-fn tb-aligned --seed 1 --save --reward-idx 0 --history-bounds 2 --learning-rate 0.0001 --batch-size 64 --no-template
-cp -r results results_graph_aligned_1

@@ -21,7 +21,3 @@ python src/graph_building/main.py --loss-fn tb-uniform-action-mult --seed 1 --sa
 cp -r results results_graph_mult_15
 python src/graph_building/main.py --loss-fn tb-tlm --seed 2 --save --reward-idx 2 --backward-init uniform
 cp -r results results_graph_tlm_9
-python src/graph_building/main.py --loss-fn tb-free --seed 1 --save --reward-idx 2
-cp -r results results_graph_free_0
-python src/graph_building/main.py --loss-fn tb-free --seed 2 --save --reward-idx 2
-cp -r results results_graph_free_1
