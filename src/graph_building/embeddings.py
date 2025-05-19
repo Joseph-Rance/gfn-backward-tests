@@ -15,10 +15,11 @@ from gfn import trajs_to_tensors
 parser = argparse.ArgumentParser()
 
 parser.add_argument("-s", "--seed", type=int, default=1)
+parser.add_argument("-d", "--device", type=str, default="cuda", help="usually 'cuda' or 'cpu'")
 parser.add_argument("-t", "--save-template", action="store_true", default=False, help="generate results/s/template.npy")
-parser.add_argument("-d", "--model-path", type=str, default=".", help="path to directory with files containing forward models (for importance sampling)")
-parser.add_argument("-n", "--num-features", type=int, default=8, help="number of features for inputs in the template")
-parser.add_argument("-n", "--depth", type=int, default=2, help="number of features for inputs in the template")
+parser.add_argument("-e", "--model-path", type=str, default=".", help="path to directory with files containing forward models (for importance sampling)")
+parser.add_argument("-n", "--num-features", type=int, default=16, help="number of features for inputs in the template")
+parser.add_argument("-k", "--depth", type=int, default=2, help="number of features for inputs in the template")
 parser.add_argument("-l", "--template-length", type=int, default=1024, help="approx. number of entries in the template")
 parser.add_argument("-b", "--batch-size", type=int, default=32, help="size of each template batch")
 parser.add_argument("-a", "--random-action-prob", type=float, default=0.25, help="probability of random actions when sampling trajectories")
@@ -62,7 +63,7 @@ if args.save_template:
     data_source = GFNSampler(base_model, *fwd_models, get_reward_fn_generator(get_uniform_counting_log_reward),
                              node_features=args.num_features, edge_features=args.num_features,
                              random_action_prob=args.random_action_prob, max_len=72, max_nodes=8,
-                             batch_size=args.batch_size, num_precomputed=0, device="cpu")
+                             batch_size=args.batch_size, num_precomputed=0, device=args.device)
     data_loader = torch.utils.data.DataLoader(data_source, batch_size=None)
 
     outs = np.array([None]*NUM_BATCHES, dtype=object)

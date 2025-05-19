@@ -52,7 +52,7 @@ parser.add_argument("-s", "--seed", type=int, default=1)
 parser.add_argument("-d", "--device", type=str, default="cuda", help="usually 'cuda' or 'cpu'")
 parser.add_argument("-o", "--save", action="store_true", default=False, help="whether to save outputs to a file")
 parser.add_argument("-c", "--cycle-len", type=int, default=100, help="how often to log/checkpoint (number of batches)")
-parser.add_argument("-t", "--num-test-graphs", type=int, default=1024, help="number of graphs to generate for estimating metrics")
+parser.add_argument("-q", "--num-test-graphs", type=int, default=1024, help="number of graphs to generate for estimating metrics")
 
 # env
 parser.add_argument("-r", "--reward-idx", type=int, default=2, help="index of reward function to use")
@@ -62,7 +62,7 @@ parser.add_argument("-e", "--reward-arg", type=float, default=[0, 0.8, 3], help=
 parser.add_argument("-f", "--num-features", type=int, default=16, help="number of features used to represent each node/edge (min 2)")
 parser.add_argument("-y", "--depth", type=int, default=2, help="depth of the transformer model")
 parser.add_argument("-g", "--max-nodes", type=int, default=9, help="maximum number of nodes in a generated graph")
-parser.add_argument("-q", "--random-action-template", type=int, default=2, help="index of the random action config to use (see code)")
+parser.add_argument("-p", "--random-action-template", type=int, default=2, help="index of the random action config to use (see code)")
 parser.add_argument("-z", "--log-z", type=float, default=None, help="constant value of log(z) to use (learnt if None)")
 parser.add_argument("-i", "--backward-init", type=str, default="random", help="how to initialise the backward policy; one of {random, uniform, <directory name>}")
 parser.add_argument("-j", "--history-bounds", type=int, default=1, help="controls how much the MDP is like a tree")
@@ -73,7 +73,7 @@ parser.add_argument("-v", "--loss-arg-a", type=float, default=1)
 parser.add_argument("-u", "--loss-arg-b", type=float, default=1)
 parser.add_argument("-w", "--loss-arg-c", type=float, default=1)
 parser.add_argument("-b", "--batch-size", type=int, default=128)
-parser.add_argument("-p", "--num-precomputed", type=int, default=0, help="number of trajectories from precomputed, high-reward graphs")
+parser.add_argument("-t", "--no-template", action="store_true", default=False, help="for if there is no template yet (need to run this file before generating template)")
 parser.add_argument("-a", "--learning-rate", type=float, default=0.0005)
 parser.add_argument("-n", "--max-update-norm", type=float, default=499.9)
 parser.add_argument("-k", "--num-batches", type=int, default=10_000)
@@ -82,7 +82,6 @@ parser.add_argument("-m", "--meta-test", action="store_true", default=False, hel
 
 args = parser.parse_args()
 
-NO_TEMPLATE = False  # for if there is no template yet (need to run this file before generating template)
 args.reward_arg = args.reward_arg[args.reward_idx]  # this is a bit hacky but better than forgetting to update this argument
 
 random.seed(args.seed)
@@ -201,7 +200,7 @@ data_source = GFNSampler(base_models[0], *fwd_models, reward_fn_generator,
                          node_features=args.num_features, edge_features=args.num_features, random_action_prob=random_prob,
                          max_len=args.max_nodes*(args.max_nodes+1), max_nodes=args.max_nodes, reward_arg=args.reward_arg,
                          node_history_bounds=(0, args.history_bounds), edge_history_bounds=(0, args.history_bounds),
-                         batch_size=args.batch_size, num_precomputed=args.num_precomputed, edges_first=False,
+                         batch_size=args.batch_size, num_precomputed=0, edges_first=False,
                          device=args.device)
 data_loader = torch.utils.data.DataLoader(data_source, batch_size=None)
 
@@ -263,7 +262,7 @@ if __name__ == "__main__":
 
                 template_metrics = {}
 
-                if not NO_TEMPLATE:
+                if not args.no_template:
 
                     template = np.load("results/s/template.npy", allow_pickle=True)
 
@@ -403,7 +402,7 @@ if __name__ == "__main__":
                     with open(f"results/batches/{it}_dist.pkl", "wb") as f:
                         pickle.dump(gen_distribution, f, pickle.HIGHEST_PROTOCOL)
 
-                    if not NO_TEMPLATE:
+                    if not args.no_template:
                         np.save(f"results/embeddings/{it}_fwd.npy", np.concatenate(fwd_embs, axis=0))
                         np.save(f"results/embeddings/{it}_bck.npy", np.concatenate(bck_embs, axis=0))
 
