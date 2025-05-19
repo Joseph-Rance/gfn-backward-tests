@@ -270,7 +270,7 @@ if __name__ == "__main__":
                     fwd_embs, bck_embs = [], []
                     for nodes, edges, masks, actions, traj_lens in template:
 
-                        log_rewards = torch.tensor(reward_fn(nodes[traj_lens - 2], edges[traj_lens - 2]))
+                        log_rewards = reward_fn(nodes[traj_lens - 2], edges[traj_lens - 2])
 
                         curr_metrics, fwd_action_probs, bck_action_probs = get_metrics(nodes, edges, masks, actions, traj_lens, log_rewards,
                                                                                        base_models, fwd_models, bck_models, args.log_z, log_z_model,
