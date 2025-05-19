@@ -44,6 +44,7 @@ from util import get_graphs_above_threshold
 
 with open("results/experiment_config.sh", "w") as f:
     f.write(" ".join(sys.argv))
+print(" ".join(sys.argv))
 
 parser = argparse.ArgumentParser()
 
@@ -78,7 +79,7 @@ parser.add_argument("-a", "--learning-rate", type=float, default=0.0005)
 parser.add_argument("-n", "--max-update-norm", type=float, default=499.9)
 parser.add_argument("-k", "--num-batches", type=int, default=10_000)
 parser.add_argument("-x", "--backward-reset-period", type=int, default=-1, help="how often to reset the backward policy (-1 for no resets)")
-parser.add_argument("-m", "--meta-test", action="store_true", default=False, help="whether to save outputs for meta learning")
+parser.add_argument("-m", "--meta-test", type=int, default=-1, help="idx of the meta learning fitness file (-1 to ignore)")
 
 args = parser.parse_args()
 
@@ -102,7 +103,7 @@ configs = {
     "tb-biased-tlm": (biased_tlm, {"parameterise_backward": True, "args": {"multiplier": args.loss_arg_a, "ns": [args.loss_arg_b]}}),  # TLM / pessimistic with weights toward ns nodes
     "tb-max-ent": (max_ent, {"parameterise_backward": True, "args": {}}),  # maximum entropy backward policy
     "tb-loss-aligned": (loss_aligned, {"parameterise_backward": False, "args": {"iters": args.loss_arg_a, "std_mult": args.loss_arg_b}}),  # aligned to loss-based backward policy
-    "meta": (meta, {"parameterise_backward": True, "args": {"weights": torch.load("results/meta_weights.pt") if args.meta_test else None, "reward_arg": args.reward_arg}})  # for meta learning
+    "meta": (meta, {"parameterise_backward": True, "args": {"weights": torch.load(f"results/meta_weights_{args.meta_test}.pt") if args.meta_test != -1 else None, "reward_arg": args.reward_arg}})  # for meta learning
 }
 
 backward, config = configs[args.loss_fn]
@@ -269,10 +270,7 @@ if __name__ == "__main__":
                     fwd_embs, bck_embs = [], []
                     for nodes, edges, masks, actions, traj_lens in template:
 
-                        log_rewards = []
-                        for graph_idx in (traj_lens - 2):
-                            log_rewards.append(reward_fn(nodes[graph_idx], edges[graph_idx]))
-                        log_rewards = torch.tensor(log_rewards)
+                        log_rewards = torch.tensor(reward_fn(nodes[traj_lens - 2], edges[traj_lens - 2]))
 
                         curr_metrics, fwd_action_probs, bck_action_probs = get_metrics(nodes, edges, masks, actions, traj_lens, log_rewards,
                                                                                        base_models, fwd_models, bck_models, args.log_z, log_z_model,
@@ -438,7 +436,7 @@ if __name__ == "__main__":
                 bck_models.append(n_model)
             bck_optimiser = torch.optim.Adam(itertools.chain(*(i.parameters() for i in bck_models)), lr=args.learning_rate, weight_decay=1e-4)
 
-    if args.meta_test:
+    if args.meta_test != -1:
         gen_distribution = np.array([[[0 for _connectivity in range(2)] for _num_nodes_in_one_n_clique in range(7+1)] for _num_nodes in range(7+1)], dtype=float)
         trajs, _log_rewards = data_source.get_sampled(num=args.num_test_graphs, test=True)
         for i, (nodes, edges, masks) in enumerate([t[-2][0] for t in trajs]):
@@ -453,7 +451,7 @@ if __name__ == "__main__":
         gen_distribution /= max(0.01, np.sum(gen_distribution))  # -> 0.01 if all graphs have >7 nodes
         eta = 0.001
         kl = np.sum(np.maximum(eta, tru_distribution) * np.log(np.maximum(eta, tru_distribution) / np.maximum(eta, gen_distribution)))
-        np.save("results/meta_fitness.npy", kl)
+        np.save(f"results/meta_fitness_{args.meta_test}.npy", kl)
 
     else:
         print("done.")

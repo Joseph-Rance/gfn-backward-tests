@@ -4,19 +4,20 @@ import pygad
 import torch
 
 
+PARALLEL = 4
 SEED = 1
 N = 3
 dp = {}
 
-def fitness_func(_ga_instance, weights, _solution_idx):
+def fitness_func(_ga_instance, weights, solution_idx):
     if tuple(weights.tolist()) in dp.keys():
         return dp[tuple(weights.tolist())]
     weights = torch.tensor(weights, dtype=torch.float32) ** N  # high N helps to focus on only a few weights
-    torch.save(weights / torch.sum(weights), "results/meta_weights.pt")  # this does not normalise: weights are not bounded since they can be negative
+    torch.save(weights / torch.sum(weights), f"results/meta_weights_{solution_idx}.pt")  # this does not normalise: weights are not bounded since they can be negative
     _return_code = subprocess.call(
-        f"python src/graph_building/main.py --reward-idx 2 --loss-fn meta --num-batches 5000 --meta-test --seed {SEED} --save", shell=True
+        f"python src/graph_building/main.py --reward-idx 2 --loss-fn meta --num-batches 5000 --meta-test {solution_idx} --seed {SEED} --cycle-len -1", shell=True
     )
-    fitness = np.load("results/meta_fitness.npy")
+    fitness = np.load(f"results/meta_fitness_{solution_idx}.npy")
     dp[tuple(weights.tolist())] = fitness
     return fitness
 
@@ -33,7 +34,8 @@ ga_instance = pygad.GA(
     random_mutation_min_val=-0.35,
     random_mutation_max_val=0.35,
     save_solutions=True,  # make sure saves what round and the fitness as well
-    random_seed=SEED
+    random_seed=SEED,
+    parallel_processing=("process", PARALLEL)
 )
 
 ga_instance.run()
