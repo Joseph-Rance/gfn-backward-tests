@@ -7,7 +7,7 @@
 
 cd /rds/user/jr879/hpc-work
 source anaconda3/bin/activate main
-cd j/gfn-backward-test
+cd j/gfn-backward-tests
 
 python -u src/graph_building/main.py --loss-fn tb-uniform-action-mult --seed 1 --save --reward-idx 2 --history-bounds 2 --loss-arg-a 1 --loss-arg-b 2.00 > j_out_0.txt
 cp -r results results_graph_mult_18

@@ -7,7 +7,7 @@
 
 cd /rds/user/jr879/hpc-work
 source anaconda3/bin/activate main
-cd h/gfn-backward-test
+cd h/gfn-backward-tests
 
 python -u src/graph_building/main.py --loss-fn tb-tlm --seed 1 --save --reward-idx 0 --depth 2 --num-features 8 --learning-rate 0.0001 --batch-size 64 --no-template > h_out_0.txt
 cp -r results results_graph_tlm_2

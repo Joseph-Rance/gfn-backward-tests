@@ -7,7 +7,7 @@
 
 cd /rds/user/jr879/hpc-work
 source anaconda3/bin/activate main
-cd d/gfn-backward-test
+cd d/gfn-backward-tests
 
 python -u src/graph_building/main.py --loss-fn tb-tlm --seed 1 --save --reward-idx 2 --log-z 16.97 > d_out_0.txt
 cp results/models/4999_bck_stop_model.pt backward/4/bck_stop_model.pt

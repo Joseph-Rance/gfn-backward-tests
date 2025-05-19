@@ -7,7 +7,7 @@
 
 cd /rds/user/jr879/hpc-work
 source anaconda3/bin/activate main
-cd k/gfn-backward-test
+cd k/gfn-backward-tests
 
 python -u src/graph_building/main.py --loss-fn tb-max-ent --seed 2 --save --reward-idx 2 > k_out_0.txt
 cp -r results results_graph_max_ent_1

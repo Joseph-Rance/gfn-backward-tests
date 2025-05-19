@@ -7,7 +7,7 @@
 
 cd /rds/user/jr879/hpc-work
 source anaconda3/bin/activate main
-cd g/gfn-backward-test
+cd g/gfn-backward-tests
 
 python -u src/graph_building/main.py --loss-fn tb-uniform --seed 2 --save --reward-idx 0 --depth 2 --num-features 8 --learning-rate 0.0001 --batch-size 64 --no-template > g_out_0.txt
 cp -r results results_graph_uniform_3
