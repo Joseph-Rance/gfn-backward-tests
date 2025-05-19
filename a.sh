@@ -5,8 +5,6 @@
 #SBATCH -p ampere
 #SBATCH --gres=gpu:1
 
-# this file trains the meta learnt model in folder a
-
 cd /rds/user/jr879/hpc-work/
 source anaconda3/bin/activate main
 cd a/gfn-backward-tests
