@@ -4,7 +4,7 @@ import pygad
 import torch
 
 
-PARALLEL = 4
+PARALLEL = 2
 SEED = 1
 N = 3
 dp = {}
@@ -36,7 +36,7 @@ ga_instance = pygad.GA(
     random_mutation_max_val=0.35,
     save_solutions=True,  # make sure saves what round and the fitness as well
     random_seed=SEED,
-    parallel_processing=("process", PARALLEL)
+    parallel_processing=("process", PARALLEL) if PARALLEL > 1 else None
 )
 
 ga_instance.run()
