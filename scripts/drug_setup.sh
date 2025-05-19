@@ -1,3 +1,5 @@
+#!/bin/sh
+
 # set line 19 of `tasks/config.py` in the main synflownet repo to have `"building_blocks_costs.csv"`
 cp data/bbs.txt src/drug_design/data/building_blocks/bbs.txt
 cp data/enamine_bbs_costs.sdf src/drug_design/data/building_blocks/enamine_bbs_costs.sdf

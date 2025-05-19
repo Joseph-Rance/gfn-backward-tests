@@ -1,3 +1,5 @@
+#!/bin/sh
+
 # uniform
 python -m src.drug_design.tasks.main --config-idx 0 --preference-strength 0.0 # TODO*
 cp -r results results_drug_uniform_0

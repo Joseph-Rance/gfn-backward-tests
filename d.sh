@@ -1,3 +1,5 @@
+#!/bin/sh
+
 python src/graph_building/main.py --loss-fn tb-uniform --seed 1 --save --reward-idx 0 --depth 2 --num-features 8 --learning-rate 0.0001 --batch-size 64
 cp -r results results_graph_uniform_2
 python src/graph_building/main.py --loss-fn tb-uniform --seed 1 --save --reward-idx 0 --log-z 10.00 --depth 2 --num-features 8 --learning-rate 0.0001 --batch-size 64

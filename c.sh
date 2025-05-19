@@ -1,3 +1,5 @@
+#!/bin/sh
+
 python src/graph_building/main.py --loss-fn tb-uniform --seed 2 --save --reward-idx 2
 cp -r results results_graph_uniform_1
 python src/graph_building/main.py --loss-fn tb-uniform --seed 1 --save --reward-idx 2 --log-z 16.97

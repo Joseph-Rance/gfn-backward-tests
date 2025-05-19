@@ -1,3 +1,5 @@
+#!/bin/sh
+
 python src/graph_building/main.py --loss-fn tb-tlm --seed 1 --save --reward-idx 2
 cp results/models/4999_bck_stop_model.pt backward/0/bck_stop_model.pt
 cp results/models/4999_base_model.pt backward/0/base_model.pt

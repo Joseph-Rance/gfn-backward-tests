@@ -1,3 +1,5 @@
+#!/bin/sh
+
 # baselines
 python src/graph_building/main.py --loss-fn tb-uniform --seed 1 --save --reward-idx 2
 cp -r results results_graph_uniform_0

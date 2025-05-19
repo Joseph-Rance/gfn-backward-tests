@@ -1,3 +1,5 @@
+#!/bin/sh
+
 #SBATCH -A COMPUTERLAB-SL2-GPU
 #SBATCH --nodes=1
 #SBATCH --time=12:00:00
