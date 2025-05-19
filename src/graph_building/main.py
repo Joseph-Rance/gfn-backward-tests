@@ -82,7 +82,7 @@ parser.add_argument("-m", "--meta-test", action="store_true", default=False, hel
 
 args = parser.parse_args()
 
-NO_TEMPLATE = True  # for if there is no template yet (need to run this file before generating template)
+NO_TEMPLATE = False  # for if there is no template yet (need to run this file before generating template)
 args.reward_arg = args.reward_arg[args.reward_idx]  # this is a bit hacky but better than forgetting to update this argument
 
 random.seed(args.seed)
@@ -370,7 +370,7 @@ if __name__ == "__main__":
                     generated_metrics[f"generated_{k}_mean"] = v.mean().item()
                     generated_metrics[f"generated_{k}_std"] = v.std().item()
 
-                eta = 0.001
+                eta = 0.0000000001
                 # https://en.wikipedia.org/wiki/Kolmogorov%E2%80%93Smirnov_test
                 ks = np.max(np.abs(np.cumsum(gen_distribution) - np.cumsum(tru_distribution))).item()
                 # https://en.wikipedia.org/wiki/Kullback%E2%80%93Leibler_divergence (KL(true || gen))
@@ -397,8 +397,8 @@ if __name__ == "__main__":
                     with open(f"results/metrics/{it}.pkl", "wb") as f:
                         pickle.dump(metrics, f, pickle.HIGHEST_PROTOCOL)
 
-                    with open(f"results/batches/{it}.pkl", "wb") as f:
-                        pickle.dump((trajs, log_rewards), f, pickle.HIGHEST_PROTOCOL)
+                    #with open(f"results/batches/{it}.pkl", "wb") as f:
+                    #    pickle.dump((trajs, log_rewards), f, pickle.HIGHEST_PROTOCOL)
 
                     with open(f"results/batches/{it}_dist.pkl", "wb") as f:
                         pickle.dump(gen_distribution, f, pickle.HIGHEST_PROTOCOL)

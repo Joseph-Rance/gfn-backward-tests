@@ -159,12 +159,11 @@ def get_bck_probs_max_ent(_trajs, traj_lens, actions, raw_embeddings, embedding_
 def get_bck_loss_max_ent(_log_z, _traj_log_p_f, _log_rewards, traj_log_p_b, traj_pred_l, **_kwargs):
     return huber(traj_log_p_b + traj_pred_l), None
 
-def get_bck_loss_loss_aligned(log_z, traj_log_p_f, log_rewards, uniform_traj_log_p_b, _info, iters=5, std_mult=0.5, eps=0.01, **_kwargs):
+def get_bck_loss_loss_aligned(log_z, traj_log_p_f, log_rewards, uniform_traj_log_p_b, _info, iters=20, std_mult=0.4, eps=0.01, const=0.2, **_kwargs):
     traj_log_p_b = torch.clone(uniform_traj_log_p_b)
     for _ in range(int(iters)):  # pray it converges
-        print("does it converge?")
-        inv_loss = 1 / huber((log_z + traj_log_p_f) - (log_rewards + traj_log_p_b))  # log_z gets broadcast into a vector here
-        traj_log_p_b = (torch.log(torch.clamp(((inv_loss - inv_loss.mean()) / inv_loss.std() * std_mult + 1), min=eps, max=1)) + uniform_traj_log_p_b).detach()
+        inv_loss = - huber((log_z + traj_log_p_f) - (log_rewards + traj_log_p_b))  # log_z gets broadcast into a vector here
+        traj_log_p_b = torch.log(torch.clamp(((inv_loss - inv_loss.mean()) / inv_loss.std() * std_mult) + const, min=eps, max=1)).detach()
     return torch.tensor([0.]*len(traj_log_p_f)), traj_log_p_b.detach()
 
 def get_bck_probs_meta(trajs, traj_lens, actions, raw_embeddings, embedding_structure, bck_models, weights=None, reward_arg=0.8, device="cuda", **_kwargs):

@@ -16,7 +16,7 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument("-s", "--seed", type=int, default=1)
 parser.add_argument("-t", "--save-template", action="store_true", default=False, help="generate results/s/template.npy")
-parser.add_argument("-d", "--model-path", type=str, default="", help="path to directory with files containing forward models (for importance sampling)")
+parser.add_argument("-d", "--model-path", type=str, default=".", help="path to directory with files containing forward models (for importance sampling)")
 parser.add_argument("-n", "--num-features", type=int, default=8, help="number of features for inputs in the template")
 parser.add_argument("-n", "--depth", type=int, default=2, help="number of features for inputs in the template")
 parser.add_argument("-l", "--template-length", type=int, default=1024, help="approx. number of entries in the template")
@@ -53,9 +53,9 @@ if args.save_template:
     fwd_edge_model = nn.Sequential(nn.Linear(args.num_features*3, args.num_features*3*2), nn.LeakyReLU(), nn.Linear(args.num_features*3*2, 1)).to(args.device)
 
     base_model.load_state_dict(torch.load(f"{args.model_path}/base_model.pt", weights_only=True))
-    fwd_stop_model.load_state_dict(torch.load(f"{args.model_path}/bck_stop_model.pt", weights_only=True))
-    fwd_node_model.load_state_dict(torch.load(f"{args.model_path}/bck_node_model.pt", weights_only=True))
-    fwd_edge_model.load_state_dict(torch.load(f"{args.model_path}/bck_edge_model.pt", weights_only=True))
+    fwd_stop_model.load_state_dict(torch.load(f"{args.model_path}/fwd_stop_model.pt", weights_only=True))
+    fwd_node_model.load_state_dict(torch.load(f"{args.model_path}/fwd_node_model.pt", weights_only=True))
+    fwd_edge_model.load_state_dict(torch.load(f"{args.model_path}/fwd_edge_model.pt", weights_only=True))
 
     fwd_models = [fwd_stop_model, fwd_node_model, fwd_edge_model]
 

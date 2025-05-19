@@ -4,9 +4,10 @@
 #pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu126
 #pip install torch-scatter -f https://data.pyg.org/whl/torch-2.6.0+cu126.html
 #pip install graph-transformer-pytorch
-#pip install matplotlib scikit-learn
+#pip install matplotlib scikit-learn tqdm pygad
 #git clone https://github.com/Joseph-Rance/gfn-backward-tests.git
 #conda activate main
+#cd gfn-backward-tests
 
 source ~/cali/anaconda3/bin/activate main
 mkdir results
