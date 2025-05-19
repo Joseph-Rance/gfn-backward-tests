@@ -8,5 +8,5 @@
 cd /rds/user/jr879/hpc-work/
 source anaconda3/bin/activate main
 cd a/gfn-backward-tests
-python src/graph_building/meta_backward.py > a_out.txt
+python -u src/graph_building/meta_backward.py > a_out.txt
 cp -r results results_graph_meta
