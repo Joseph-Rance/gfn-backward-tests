@@ -22,4 +22,4 @@ cp -r results results_graph_biased_3
 python -u src/graph_building/main.py --loss-fn tb-aligned --seed 1 --save --reward-idx 0 --depth 2 --num-features 8 --learning-rate 0.0001 --batch-size 64 --no-template > h_out_5.txt
 cp -r results results_graph_aligned_0
 python -u src/graph_building/main.py --loss-fn tb-uniform-rand --seed 1 --save --reward-idx 2 --loss-arg-a 0.125 > h_out_6.txt
-cp -r results results_graph_max_rand_0
+cp -r results results_graph_rand_0
