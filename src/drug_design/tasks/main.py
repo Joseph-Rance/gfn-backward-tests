@@ -13,17 +13,17 @@ from rdkit.Chem import AllChem
 
 from synflownet.envs.synthesis_building_env import ReactionTemplateEnvContext
 
-from drug_design.tasks.n_model import GraphTransformerSynGFN
-from drug_design.tasks.algs import (TrajectoryBalanceUniform,
-                                    TrajectoryBalanceFree,
-                                    TrajectoryBalanceTLM,
-                                    TrajectoryBalanceMaxEnt,
-                                    TrajectoryBalancePrefDQN,
-                                    TrajectoryBalancePrefREINFORCE,
-                                    TrajectoryBalancePrefAC,
-                                    TrajectoryBalancePrefPPO,
-                                    sq_dist, huber)
-from drug_design.tasks.util import ReactionTask, ReactionTemplateEnv, SynthesisSampler, DataSource
+from src.drug_design.tasks.n_model import GraphTransformerSynGFN
+from src.drug_design.tasks.algs import (TrajectoryBalanceUniform,
+                                        TrajectoryBalanceFree,
+                                        TrajectoryBalanceTLM,
+                                        TrajectoryBalanceMaxEnt,
+                                        TrajectoryBalancePrefDQN,
+                                        TrajectoryBalancePrefREINFORCE,
+                                        TrajectoryBalancePrefAC,
+                                        TrajectoryBalancePrefPPO,
+                                        sq_dist_fn, huber)
+from src.drug_design.tasks.util import ReactionTask, ReactionTemplateEnv, SynthesisSampler, DataSource
 
 
 parser = argparse.ArgumentParser()
@@ -34,11 +34,13 @@ parser.add_argument("-w", "--preference-strength", type=float, default=0, help="
 parser.add_argument("-g", "--gamma", type=float, default=1, help="discount factor on rewards for backward policy")
 parser.add_argument("-m", "--entropy-loss-multiplier", type=float, default=0, help="weighting of entropy term in backward policy loss")
 parser.add_argument("-e", "--epsilon", type=float, default=0.2, help="clip proportion for PPO")
-parser.add_argument("-l", "--dist-fn", type=str, default="huber", help="options: {square, huber}")
-parser.add_argument("-f", "--target-update-period", type=int, default=5, help="number of batches between each update to the target model")
+parser.add_argument("-s", "--dist-fn", type=str, default="huber", help="options: {square, huber}")
+parser.add_argument("-t", "--target-update-period", type=int, default=1, help="number of batches between each update to the target model")
 parser.add_argument("-p", "--print-period", type=int, default=1, help="number of batches between each print")
 parser.add_argument("-c", "--checkpoint-period", type=int, default=5, help="number of batches between each checkpoint")
 parser.add_argument("-f", "--reward-thresh", type=float, default=0.9, help="value required to be considered 'high' reward")
+parser.add_argument("-l", "--max-len", type=int, default=5, help="max trajectory length")
+parser.add_argument("-r", "--random-action-prob", type=float, default=0.1, help="probability of randomly selecting an action")
 args = parser.parse_args()
 
 
@@ -56,35 +58,35 @@ config = {
     "outs": 1  # number of per graph outputs
 }
 
-if args.c == 1:  # UNCONSTRAINED BACKWARD POLICY
+if args.config_idx == 1:  # UNCONSTRAINED BACKWARD POLICY
     config["algo"] = TrajectoryBalanceFree
     config["parameterise_p_b"] = True
-elif args.c == 2:  # TRAJECTORY LIKELIHOOD MAXIMISATION BACKWARD POLICY
+elif args.config_idx == 2:  # TRAJECTORY LIKELIHOOD MAXIMISATION BACKWARD POLICY
     config["algo"] = TrajectoryBalanceTLM
     config["parameterise_p_b"] = True
-elif args.c == 3:  # MAXIMUM ENTROPY BACKWARD POLICY
+elif args.config_idx == 3:  # MAXIMUM ENTROPY BACKWARD POLICY
     config["algo"] = TrajectoryBalanceMaxEnt
     config["parameterise_p_b"] = True
     config["outs"] = 2
-elif args.c == 4:  # PREFERENCE BACKWARD POLICY WITH DQN
+elif args.config_idx == 4:  # PREFERENCE BACKWARD POLICY WITH DQN
     config["algo"] = TrajectoryBalancePrefDQN
     config["parameterise_p_b"] = config["sample_backward"] = config["target_model"] = True
     config["gamma"] = args.gamma
     config["entropy_loss_multiplier"] = args.entropy_loss_multiplier
     config["target_update_period"] = args.target_update_period
-elif args.c == 5:  # PREFERENCE BACKWARD POLICY WITH REINFORCE
+elif args.config_idx == 5:  # PREFERENCE BACKWARD POLICY WITH REINFORCE
     config["algo"] = TrajectoryBalancePrefREINFORCE
     config["parameterise_p_b"] = config["sample_backward"] = True
     config["gamma"] = args.gamma
     config["entropy_loss_multiplier"] = args.entropy_loss_multiplier
     config["outs"] = 2
-elif args.c == 6:  # PREFERENCE BACKWARD POLICY WITH ACTOR CRITIC
+elif args.config_idx == 6:  # PREFERENCE BACKWARD POLICY WITH ACTOR CRITIC
     config["algo"] = TrajectoryBalancePrefAC
     config["parameterise_p_b"] = config["sample_backward"] = True
     config["gamma"] = args.gamma
     config["entropy_loss_multiplier"] = args.entropy_loss_multiplier
     config["outs"] = 2
-elif args.c == 7:  # PREFERENCE BACKWARD POLICY WITH PPO
+elif args.config_idx == 7:  # PREFERENCE BACKWARD POLICY WITH PPO
     config["algo"] = TrajectoryBalancePrefPPO
     config["parameterise_p_b"] = config["sample_backward"] = config["target_model"] = True
     config["gamma"] = args.gamma
@@ -123,16 +125,16 @@ if __name__ == "__main__":
         strict_bck_masking=False
     )
     env = ReactionTemplateEnv(ctx)  # for actions
-    sampler = SynthesisSampler(ctx, env, args.device, config["parameterise_p_b"], not config["parameterise_p_b"])  # for sampling policies
+    sampler = SynthesisSampler(ctx, env, args.device, config["parameterise_p_b"], not config["parameterise_p_b"], max_len=args.max_len)  # for sampling policies
     algo = config["algo"](ctx, sampler, args.device, config["preference_strength"],
                 gamma=config["gamma"], entropy_loss_multiplier=config["entropy_loss_multiplier"], eps=config["epsilon"])  # for computing loss / helps making batches
     model = GraphTransformerSynGFN(ctx, do_bck=config["parameterise_p_b"], outs=config["outs"])
-    target_model = GraphTransformerSynGFN(ctx, do_bck=config["parameterise_p_b"], outs=config["outs"]) if config["target_model"] else None
+    target_model = GraphTransformerSynGFN(ctx, do_bck=config["parameterise_p_b"], outs=config["outs"]).to(args.device) if config["target_model"] else None
 
     Z_params = list(model._logZ.parameters())
     non_Z_params = [i for i in model.parameters() if all(id(i) != id(j) for j in Z_params)]
 
-    dist_fn = sq_dist if args.dist_fn == "square" else huber
+    dist_fn = sq_dist_fn if args.dist_fn == "square" else huber
 
     opt = torch.optim.Adam(non_Z_params, 1e-4, (0.9, 0.999), weight_decay=1e-8, eps=1e-8)
     opt_Z = torch.optim.Adam(Z_params, 1e-3, (0.9, 0.999), weight_decay=1e-8, eps=1e-8)
@@ -140,12 +142,12 @@ if __name__ == "__main__":
     lr_sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda steps: 2 ** -(steps/200))
     lr_sched_Z = torch.optim.lr_scheduler.LambdaLR(opt_Z, lambda steps: 2 ** -(steps/5_000))
 
-    model.to(args.device)
+    model = model.to(args.device)
 
     with torch.no_grad():  # (probably not necessary)
-        train_src = DataSource(ctx, algo, task, args.device, use_replay=config["sample_backward"])  # gets training data inc rewards
+        train_src = DataSource(ctx, algo, task, args.device, use_replay=config["sample_backward"], random_action_prob=args.random_action_prob)  # gets training data inc rewards
 
-        train_src.do_sample_model(model, args.batch_size)
+        train_src.do_sample_model(model, 4)#args.batch_size)  # TODO
         if config["sample_backward"]:
             train_src.do_sample_backward(model, args.batch_size)
 
@@ -156,19 +158,20 @@ if __name__ == "__main__":
     num_mols_tested = [0]
 
     mean_tanimoto_distances = []
-    traj_len_dist = [0 for __ in range(7)]
+    traj_len_dist = [0 for __ in range(args.max_len + 7)]
 
-    full_results = [[] for __ in range(20)]
+    full_results = [[] for __ in range(20 + args.max_len)]
 
     start_time = time.time()
 
-    for it, batch in zip(range(5_000), cycle(train_dl)):
+    for it, batch in zip(range(800), cycle(train_dl)):
 
         batch = batch.to(args.device)
 
         if config["target_model"] and (it+1) % config["target_update_period"] == 0:
             # copy probably redundant here
             target_model.load_state_dict(copy.deepcopy(model.state_dict()))
+            target_model = target_model.to(args.device)
 
         model.train()
 
@@ -185,17 +188,20 @@ if __name__ == "__main__":
         lr_sched.step()
         lr_sched_Z.step()
 
-        for l in batch.traj_lens:
+        for l in batch.traj_lens[batch.from_p_b.logical_not()]:
             traj_len_dist[l] += 1 / 5_000 / args.batch_size
+
+        train_src.random_action_prob *= 0.995
 
         # test number of unique high reward scaffolds we found *during training*
         with torch.no_grad():
 
-            mols = [ctx.graph_to_obj(batch.nx_graphs[i]) for i in (torch.cumsum(batch.traj_lens, 0) - 1)]
-            rewards = torch.exp(batch.log_rewards / batch.cond_info_beta)
+            mols = [ctx.graph_to_obj(batch.nx_graphs[i]) for i in (torch.cumsum(batch.traj_lens, 0) - 1)[batch.from_p_b.logical_not()]]
+            rewards = torch.exp(batch.log_rewards[batch.from_p_b.logical_not()] / batch.cond_info_beta[batch.from_p_b.logical_not()])
 
             murcko_scaffolds = [MurckoScaffold.MurckoScaffoldSmiles(mol=m) for m in mols]
 
+            prev_unique_scaffolds = len(unique_scaffolds)
             scaffolds_above_thresh = [smi for smi, r in zip(murcko_scaffolds, rewards) if r > args.reward_thresh]
             unique_scaffolds.update(scaffolds_above_thresh)
 
@@ -218,14 +224,16 @@ if __name__ == "__main__":
             loss_2 = info.get("critic_loss", 0) + info.get("baseline_loss", 0)
 
             if (it+1) % args.print_period == 0:
-                print(f"iteration {it} : loss:{info['loss']:7.3f} ({' + '.join((f'{l:7.3f}' for l in (loss_0, loss_1, loss_2)))})" \
-                    f"sampled_reward_avg:{rewards.mean().item():6.4f} " \
-                    f"time_spent:{total_time:4.2f} " \
-                    f"logZ:{info['log_z']:7.4f} " \
+                print(f"iteration {it:>3}: loss: {info['loss']:7.3f} ({' + '.join((f'{l:8.3f}' for l in (loss_0, loss_1, loss_2)))}) " \
+                    f"sampled_reward_avg: {rewards.mean().item():6.4f} " \
+                    f"time_spent: {total_time:4.2f} " \
+                    f"logZ: {info['log_z']:7.4f} " \
                     f"gen scaffolds: {len(scaffolds_above_thresh)} " \
-                    f"unique scaffolds: {len(unique_scaffolds)} " \
+                    f"unique scaffolds: {len(unique_scaffolds) - prev_unique_scaffolds} " \
                     f"Tanimoto: {mean_tanimoto_dist} " \
-                    f"mean synth. cost: {sum([i.sum().item() for i in batch.bbs_costs])/len(batch.traj_lens):4.2f}")
+                    f"mean synth. cost: {sum([c.sum().item() for i, c in enumerate(batch.bbs_costs) if not batch.from_p_b[i]])/len(batch.traj_lens[batch.from_p_b.logical_not()]):4.2f} " \
+                     + (f"mean bck synth. cost: {sum([c.sum().item() for i, c in enumerate(batch.bbs_costs) if batch.from_p_b[i]])/len(batch.traj_lens[batch.from_p_b]):4.2f}"
+                        if config["sample_backward"] else ""))
 
             res = [
                 info["loss"],

@@ -1,7 +1,7 @@
 #!/bin/sh
 #SBATCH -A COMPUTERLAB-SL2-GPU
 #SBATCH --nodes=1
-#SBATCH --time=24:00:00
+#SBATCH --time=36:00:00
 #SBATCH -p ampere
 #SBATCH --gres=gpu:1
 

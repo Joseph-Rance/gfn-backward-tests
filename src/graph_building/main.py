@@ -33,6 +33,7 @@ from backward import (
     frozen,
     free,
     tlm,
+    inv_tlm,
     soft_tlm,
     smooth_tlm,
     biased_tlm,
@@ -101,6 +102,7 @@ configs = {
     "tb-frozen": (frozen, {"parameterise_backward": True, "args": {}}),  # frozen parameterised backward policy
     "tb-free": (free, {"parameterise_backward": True, "args": {}}),  # TB loss backpropagated to backward policy
     "tb-tlm": (tlm, {"parameterise_backward": True, "args": {}}),  # TLM / pessimistic
+    "tb-inv-tlm": (inv_tlm, {"parameterise_backward": True, "args": {}}),  # inverted TLM / pessimistic
     "tb-soft-tlm": (soft_tlm, {"parameterise_backward": True, "args": {"a": args.loss_arg_a}}),  # TLM / pessimistic mixed with a uniform distribution
     "tb-smooth-tlm": (smooth_tlm, {"parameterise_backward": True, "args": {"a": args.loss_arg_a}}),  # TLM / pessimistic mixed with a uniform distribution (pre-backprop)
     "tb-biased-tlm": (biased_tlm, {"parameterise_backward": True, "args": {"multiplier": args.loss_arg_a, "ns": [args.loss_arg_b]}}),  # TLM / pessimistic with weights toward ns nodes
@@ -454,7 +456,7 @@ if __name__ == "__main__":
         gen_distribution /= max(0.01, np.sum(gen_distribution))  # -> 0.01 if all graphs have >7 nodes
         eta = 0.001
         kl = np.sum(np.maximum(eta, tru_distribution) * np.log(np.maximum(eta, tru_distribution) / np.maximum(eta, gen_distribution)))
-        np.save(f"results/meta_fitness_{args.meta_test}.npy", kl)
+        np.save(f"results/meta_fitness_{args.meta_test}.npy", -kl)
 
     else:
         print("done.")

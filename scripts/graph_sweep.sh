@@ -47,6 +47,10 @@ cp results/models/9999_base_model.pt backward/5/base_model.pt
 cp results/models/9999_bck_node_model.pt backward/5/bck_node_model.pt
 cp results/models/9999_bck_edge_model.pt backward/5/bck_edge_model.pt
 cp -r results results_graph_tlm_4
+python src/graph_building/main.py --loss-fn tb-const --seed 1 --save --reward-idx 2 --loss-arg-a 0.08
+cp -r results results_graph_const_0
+python src/graph_building/main.py --loss-fn tb-const --seed 1 --save --reward-idx 0 --loss-arg-a 0.08 --depth 2 --num-features 8 --learning-rate 0.0001 --batch-size 64 --no-template
+cp -r results results_graph_const_1
 python src/graph_building/main.py --loss-fn tb-const --seed 1 --save --reward-idx 2 --loss-arg-a 0.2
 cp -r results results_graph_const_0
 python src/graph_building/main.py --loss-fn tb-const --seed 1 --save --reward-idx 0 --loss-arg-a 0.2 --depth 2 --num-features 8 --learning-rate 0.0001 --batch-size 64 --no-template

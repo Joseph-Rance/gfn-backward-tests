@@ -3,7 +3,6 @@ import pickle
 from pathlib import Path
 
 import numpy as np
-import rdkit.Chem as Chem
 from tqdm import tqdm
 
 from synflownet.envs.synthesis_building_env import ReactionTemplateEnvContext
@@ -45,7 +44,6 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     precompute_bb_masks(args.out_path)
-    print("Done!")
     with open(args.out_path, "rb") as f:
         masks = pickle.load(f)
-    print(masks.shape)
+    print("done!")

@@ -1,5 +1,6 @@
 import argparse
 import warnings
+from pathlib import Path
 
 from rdkit import Chem
 from rdkit.Chem import SaltRemover
@@ -33,7 +34,7 @@ if __name__ == "__main__":
     parser.add_argument("--output_filename", type=str, help="Path to output sanitized building blocks")
     args = parser.parse_args()
 
-    with open(args.building_blocks_filename, "r") as file:
+    with open(Path(__file__).parent / args.building_blocks_filename, "r") as file:
         building_blocks = file.read().splitlines()
 
     print("Sanitizing building blocks ...")
@@ -42,6 +43,6 @@ if __name__ == "__main__":
     building_blocks_sanitized = [bb for bb in building_blocks_sanitized if bb]
 
     new_filename = args.output_filename
-    with open(new_filename, "w") as file:
+    with open(Path(__file__).parent / new_filename, "w") as file:
         for bb in building_blocks_sanitized:
             file.write(bb + "\n")

@@ -94,6 +94,9 @@ def get_bck_loss_free(log_z, traj_log_p_f, _log_rewards, traj_log_p_b, _info, **
 def get_bck_loss_tlm(_log_z, _traj_log_p_f, _log_rewards, traj_log_p_b, _info, **_kwargs):
     return -traj_log_p_b, None
 
+def get_bck_loss_inv_tlm(_log_z, _traj_log_p_f, _log_rewards, traj_log_p_b, _info, **_kwargs):
+    return traj_log_p_b, None
+
 def get_bck_probs_soft_tlm(trajs, _traj_lens, actions, raw_embeddings, embedding_structure, bck_models, a=0.5, **_kwargs):
     bck_action_probs = get_action_probs(*raw_embeddings[0], *embedding_structure[0], *bck_models, random_action_prob=0, apply_masks=False)
     single_state_p_b_std = torch.std(bck_action_probs, dim=1)
@@ -209,6 +212,7 @@ aligned = (get_bck_probs_aligned, lambda *pargs, **_kwargs: (torch.tensor([0.]*l
 frozen = (get_bck_probs_frozen, lambda *pargs, **_kwargs: (torch.tensor([0.]*len(pargs[1]), device=pargs[0].device), None))
 free = (get_bck_probs_tlm, get_bck_loss_free)
 tlm = (get_bck_probs_tlm, get_bck_loss_tlm)
+inv_tlm = (get_bck_probs_tlm, get_bck_loss_inv_tlm)
 soft_tlm = (get_bck_probs_soft_tlm, get_bck_loss_tlm)
 smooth_tlm = (get_bck_probs_smooth_tlm, get_bck_loss_smooth_biased_tlm)
 biased_tlm = (get_bck_probs_biased_tlm, get_bck_loss_smooth_biased_tlm)

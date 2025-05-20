@@ -9,8 +9,8 @@ SEED = 1
 N = 3
 dp = {}
 
-def fitness_func(_ga_instance, weights, solution_idx):
-    print(solution_idx)
+def fitness_func(ga_instance, weights, solution_idx):
+    solution_idx += ga_instance.generations_completed * 10
     if tuple(weights.tolist()) in dp.keys():
         return dp[tuple(weights.tolist())]
     weights = torch.tensor(weights, dtype=torch.float32) ** N  # high N helps to focus on only a few weights

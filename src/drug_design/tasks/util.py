@@ -3,7 +3,6 @@ import numpy as np
 import torch
 from torch.utils.data import IterableDataset
 import torch_geometric.data as gd
-import rdkit
 from rdkit import Chem
 
 from synflownet import ObjectProperties, LogScalar
@@ -167,7 +166,7 @@ class SynthesisSampler(Sampler):
         self.device = device
         self.record_back_actions = record_back_actions
         self.record_uniform_probs = record_uniform_probs
-        self.max_len = max_len if max_len else 3
+        self.max_len = max_len if max_len else 5
 
     def sample_from_model(self, model, n, cond_info, random_action_prob=0):
 
@@ -280,6 +279,9 @@ class SynthesisSampler(Sampler):
 
         for t in range(self.max_len):
 
+            if all(done):
+                break
+
             torch_graphs = [self.ctx.graph_to_Data(g, traj_len=t) for i, g in enumerate(graphs) if not done[i]]
 
             masks_sum = [torch.sum(g.bck_react_uni_mask) \
@@ -301,8 +303,12 @@ class SynthesisSampler(Sampler):
                     continue
 
                 b_a = graph_actions[j]
-                gp, both_are_bb, bb_idx = self.env.backward_step(graphs[i], b_a)  # add try accept here?
-                graphs[i] = self.ctx.obj_to_graph(gp) if gp else self.env.empty_graph()
+                try:
+                    gp, both_are_bb, bb_idx = self.env.backward_step(graphs[i], b_a)
+                    graphs[i] = self.ctx.obj_to_graph(gp) if gp else self.env.empty_graph()
+                except:  # if we can't compute backward, punish the backward policy by not making the graph empty
+                    bb_idx, both_are_bb = -1, 0
+
                 b_a.bb = both_are_bb
 
                 data[i]["traj"].append((graphs[i], GraphAction(GraphActionType.ReactUni, rxn=0)))
@@ -311,7 +317,11 @@ class SynthesisSampler(Sampler):
                 data[i]["is_sink"].append(False)
 
                 if b_a.action == GraphActionType.BckRemoveFirstReactant:
-                    data[i]["bbs"].append(self.ctx.building_blocks.index(Chem.MolToSmiles(self.ctx.graph_to_obj(graphs[i]))))
+                    bb = Chem.MolToSmiles(self.ctx.graph_to_obj(graphs[i]))
+                    if bb in self.ctx.building_blocks:
+                        data[i]["bbs"].append(self.ctx.building_blocks.index(bb))
+                    else:
+                        data[i]["bbs"].append(-1)
                 elif bb_idx:
                     data[i]["bbs"].append(bb_idx)
                 else:
@@ -330,7 +340,7 @@ class SynthesisSampler(Sampler):
             data[i]["bck_a"] = [GraphAction(GraphActionType.Stop)] + data[i]["bck_a"][::-1]
             data[i]["is_sink"] = data[i]["is_sink"][::-1]
 
-            data[i]["bck_logprobs"] = torch.stack(data[i]["bck_logprobs"]).reshape(-1)[::-1]
+            data[i]["bck_logprobs"] = torch.stack(data[i]["bck_logprobs"][::-1]).reshape(-1)
 
         return data
 
@@ -379,17 +389,18 @@ class TrajectoryBalanceBase:
         raise NotImplementedError()
 
 class DataSource(IterableDataset):
-    def __init__(self, ctx, algo, task, device, use_replay=False):
+    def __init__(self, ctx, algo, task, device, use_replay=False, random_action_prob=0.1):
 
         self.iterators = []
         self.ctx = ctx
         self.algo = algo
         self.task = task
+        self.random_action_prob = random_action_prob
 
         self.device = device
 
         if use_replay:
-            self.replay_buffer = torch.tensor([None] * REPLAY_BUFFER_LEN)
+            self.replay_buffer = np.array([None] * REPLAY_BUFFER_LEN)
             self.replay_end, self.replay_saturated = 0, False
         
         self.use_replay = use_replay
@@ -418,11 +429,11 @@ class DataSource(IterableDataset):
                 }
 
                 cond_info_encoding = cond_info["encoding"].to(self.device)
-                trajs = self.algo.sampler.sample_from_model(model, num_samples, cond_info_encoding, 0)
+                trajs = self.algo.sampler.sample_from_model(model, num_samples, cond_info_encoding, self.random_action_prob)
 
                 for i in range(len(trajs)):
                     trajs[i]["cond_info"] = {k: cond_info[k][i] for k in cond_info}
-                    trajs[i]["bbs_costs"] = torch.tensor([(self.ctx.bbs_costs[bb] if bb is not None else 0) for bb in trajs[i]["bbs"]])
+                    trajs[i]["bbs_costs"] = torch.tensor([(self.ctx.bbs_costs.get(bb, self.ctx.median_cost) if bb is not None else 0) for bb in trajs[i]["bbs"]])
                     trajs[i]["from_p_b"] = torch.tensor([False])
 
                 self.compute_properties(trajs)
@@ -460,11 +471,11 @@ class DataSource(IterableDataset):
                 }
 
                 cond_info_encoding = cond_info["encoding"].to(self.device)
-                trajs = self.algo.sampler.sample_backward_from_graphs(model, self.replay_buffer[idxs], cond_info_encoding, 0)
+                trajs = self.algo.sampler.sample_backward_from_graphs(model, self.replay_buffer[idxs], cond_info_encoding, self.random_action_prob)
 
                 for i in range(len(trajs)):
                     trajs[i]["cond_info"] = {k: cond_info[k][i] for k in cond_info}
-                    trajs[i]["bbs_costs"] = [(self.ctx.bbs_costs[bb] if bb is not None else 0) for bb in trajs[i]["bbs"]]
+                    trajs[i]["bbs_costs"] = torch.tensor([(self.ctx.bbs_costs.get(bb, self.ctx.median_cost) if bb is not None else 0) for bb in trajs[i]["bbs"]])
                     trajs[i]["from_p_b"] = torch.tensor([True])
 
                 self.compute_properties(trajs)
