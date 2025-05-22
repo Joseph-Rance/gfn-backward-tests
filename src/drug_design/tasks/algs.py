@@ -117,7 +117,7 @@ class TrajectoryBalancePrefDQN(TrajectoryBalanceBase):
         p_b_mask = batch.from_p_b.to(self.device).repeat_interleave(batch.traj_lens)
         log_p_F = fwd_cat.log_prob(batch.actions, batch.nx_graphs, model)[p_b_mask.logical_not()]
         q_B = bck_cat.get_prob(batch.bck_actions, softmax=False)  # represents states values
-        p_B = bck_cat.get_prob(batch.bck_actions, softmax=True)   # represents probability distribution
+        p_B = bck_cat.get_prob(batch.bck_actions, softmax=True, rev=True)   # represents probability distribution  # TODO: change rev back?
 
         final_graph_idxs = torch.cumsum(batch.traj_lens[batch.from_p_b.logical_not()], 0) - 1
 
@@ -131,35 +131,46 @@ class TrajectoryBalancePrefDQN(TrajectoryBalanceBase):
         p_B[batch.is_sink] = 0
         log_p_B = torch.clamp(p_B, min=1e-10).log()
 
+        #print(torch.concatenate([j for i, j in enumerate(batch.bbs_costs) if batch.from_p_b[i]])[:10])
+
         q_B = torch.roll(q_B, -1, 0)  # index i is q value going into state i
         q_B[batch.is_sink] = 0
         q_B = torch.roll(q_B, 1, 0)  # index i is q value going into state i-1
 
         with torch.no_grad():
             _target_fwd_cat, target_bck_cat, _target_per_graph_out = target_model(batch, batch.cond_info[batch_idx])
-        max_target_q_B = torch.clamp(target_bck_cat._compute_batchwise_max()[0], min=-5)[p_b_mask]  # docstring not right for this fn?
-        final_graph_idxs_from_p_b = torch.cumsum(batch.traj_lens[batch.from_p_b], 0) - 1
+
+        max_target_q_B = torch.clamp(target_bck_cat._compute_batchwise_max()[0], min=-5)[p_b_mask.logical_not()]  # docstring not right for this fn?  # TODO: remove .logical_not()
+        final_graph_idxs_from_p_b = torch.cumsum(batch.traj_lens[batch.from_p_b.logical_not()], 0) - 1  # TODO: remove .logical_not()
+
+        #print(q_B[p_b_mask.to("cpu")][:10])
+        #print(max_target_q_B[:10])
+        #print("lens:", batch.traj_lens[batch.from_p_b][:3], [j for i,j in enumerate(batch.bck_actions) if p_b_mask[i]][:10])
 
         max_target_q_B = torch.roll(max_target_q_B, -1, 0)  # index i is q value going into state i
         max_target_q_B[final_graph_idxs_from_p_b] = 0
-        max_target_q_B[torch.roll(batch.is_sink[p_b_mask], -1, 0)] = 0
+        max_target_q_B[torch.roll(batch.is_sink[p_b_mask.logical_not()], -1, 0)] = 0  # TODO: remove .logical_not()
         max_target_q_B = torch.roll(max_target_q_B, 2, 0)  # index i is q value going into state i-2
 
-        costs = torch.roll(torch.concatenate([j for i, j in enumerate(batch.bbs_costs) if batch.from_p_b[i]]), 1, 0)
+        costs = torch.roll(torch.concatenate([j for i, j in enumerate(batch.bbs_costs) if not batch.from_p_b[i]]), 1, 0)  # TODO: remove not
 
         #idx                   0       1               2                     3                     -1
-        #costs                 0       cost to s0      cost to s1            cost to s2            0
-        #max_target_q_B        0       0               max q value from s1   max q value from s2   0
-        #log_q_B               0       q value to s0   q value to s1         q value to s2         0
+        #costs                 0       cost to s0      cost to s1            cost to s2            cost to s-2
+        #max_target_q_B        0       0               max q value from s1   max q value from s2   max q value from s-2
+        #q_pred                0       q value to s0   q value to s1         q value to s2         q value to s-2
 
-        target = - 2 * costs + self.gamma * max_target_q_B
-        q_pred = q_B[p_b_mask.to("cpu")]
-        for i in range(10):
-            print(q_pred[i].item(), "<->", target[i].item(), "= - 2 *", costs[i].item(), "+", self.gamma, "*", max_target_q_B[i].item())
+        #print(costs[:10])
+        #print(max_target_q_B[:10])
+        #print(q_B[p_b_mask.to("cpu")][:10])
+
+        target = costs + self.gamma * max_target_q_B
+        q_pred = q_B[p_b_mask.logical_not().to("cpu")]  # TODO: remove .logical_not()
+        #for i in range(10):
+        #    print(q_pred[i].item(), "<->", target[i].item(), "=", costs[i].item(), "+", self.gamma, "*", max_target_q_B[i].item())
         p_B_loss = dist_fn(target.detach() - q_pred).mean() \
                  + self.entropy_loss_multiplier * sum([i * i.exp() for i in log_p_B[p_b_mask]])
 
-        print("dirc", (target - q_pred).mean().item(), "mean", q_pred.mean().item())
+        #print("dirc", (target - q_pred).mean().item(), "mean", q_pred.mean().item())
 
         traj_log_p_F = scatter(log_p_F, batch_idx[p_b_mask.logical_not()], dim=0, dim_size=batch.traj_lens.shape[0], reduce="sum")
         traj_log_p_B = scatter(log_p_B[p_b_mask.logical_not()], batch_idx[p_b_mask.logical_not()], dim=0, dim_size=batch.traj_lens.shape[0], reduce="sum")
@@ -170,8 +181,7 @@ class TrajectoryBalancePrefDQN(TrajectoryBalanceBase):
         tb_loss = dist_fn(traj_diffs).mean()  # train p_F with p_B from prev. iteration
                                            # (slightly different from algorithm 1 in the paper)
 
-        #loss = tb_loss + p_B_loss
-        loss = p_B_loss
+        loss = tb_loss + p_B_loss
 
         info = {
             "log_z": forward_log_Z.mean().item(),

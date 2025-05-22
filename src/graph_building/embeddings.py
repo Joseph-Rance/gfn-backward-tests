@@ -123,6 +123,9 @@ if args.process_data:
     losses = np.load(f"{args.results_dir}/s/losses.npy")
     colours = np.load(f"{args.results_dir}/s/colours.npy")
 
+    # TODO:
+    # "It is highly recommended to use another dimensionality reduction method (e.g. PCA for dense data or TruncatedSVD for sparse data) to reduce the number of dimensions to a reasonable amount (e.g. 50) if the number of features is very high. This will suppress some noise and speed up the computation of pairwise distances between samples. For more tips see Laurens van der Maaten’s FAQ [2].""
+
     tsne = manifold.TSNE(n_components=1, random_state=1)
     fwd_vals = tsne.fit_transform(fwd_embeddings).flatten()
     bck_vals = tsne.fit_transform(bck_embeddings).flatten()

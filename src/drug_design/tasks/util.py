@@ -198,6 +198,7 @@ class SynthesisSampler(Sampler):
                     data[i]["bck_a"].append(GraphAction(GraphActionType.Stop))
                     data[i]["bck_logprobs"].append(torch.tensor([1.0]).log())
                     data[i]["is_sink"].append(True)
+                    data[i]["bbs"].append(None)
                     done[i] = True
 
                 else:
@@ -211,6 +212,7 @@ class SynthesisSampler(Sampler):
                             data[i]["bck_a"].append(GraphAction(GraphActionType.BckReactBi, rxn=graph_actions[j].rxn, bb=0))
                             data[i]["bck_logprobs"].append(torch.tensor([1.0]).log())
                             data[i]["is_sink"].append(True)
+                            data[i]["bbs"].append(None)
                             done[i] = True
                             data[i]["is_valid"] = False
                             continue
@@ -220,6 +222,7 @@ class SynthesisSampler(Sampler):
                     except Exception as e:
                         data[i]["bck_logprobs"].append(torch.tensor([1.0]).log())
                         data[i]["is_sink"].append(True)
+                        data[i]["bbs"].append(None)
                         done[i] = True
                         data[i]["is_valid"] = False
                         continue
@@ -305,9 +308,12 @@ class SynthesisSampler(Sampler):
                 b_a = graph_actions[j]
                 try:
                     gp, both_are_bb, bb_idx = self.env.backward_step(graphs[i], b_a)
-                    graphs[i] = self.ctx.obj_to_graph(gp) if gp else self.env.empty_graph()
+                    failed_bck = False
                 except:  # if we can't compute backward, punish the backward policy by not making the graph empty
-                    bb_idx, both_are_bb = -1, 0
+                    both_are_bb, gp = 0, False
+                    failed_bck = True
+
+                graphs[i] = self.ctx.obj_to_graph(gp) if gp else self.env.empty_graph()
 
                 b_a.bb = both_are_bb
 
@@ -316,7 +322,9 @@ class SynthesisSampler(Sampler):
                 data[i]["bck_logprobs"].append(torch.tensor([1.0]).log())  # (placeholder)
                 data[i]["is_sink"].append(False)
 
-                if b_a.action == GraphActionType.BckRemoveFirstReactant:
+                if failed_bck:
+                    data[i]["bbs"].append(None)
+                elif b_a.action == GraphActionType.BckRemoveFirstReactant:
                     bb = Chem.MolToSmiles(self.ctx.graph_to_obj(graphs[i]))
                     if bb in self.ctx.building_blocks:
                         data[i]["bbs"].append(self.ctx.building_blocks.index(bb))

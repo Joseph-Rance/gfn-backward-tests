@@ -35,7 +35,7 @@ parser.add_argument("-g", "--gamma", type=float, default=1, help="discount facto
 parser.add_argument("-m", "--entropy-loss-multiplier", type=float, default=0, help="weighting of entropy term in backward policy loss")
 parser.add_argument("-e", "--epsilon", type=float, default=0.2, help="clip proportion for PPO")
 parser.add_argument("-s", "--dist-fn", type=str, default="huber", help="options: {square, huber}")
-parser.add_argument("-t", "--target-update-period", type=int, default=1, help="number of batches between each update to the target model")
+parser.add_argument("-t", "--target-update-period", type=int, default=3, help="number of batches between each update to the target model")
 parser.add_argument("-p", "--print-period", type=int, default=1, help="number of batches between each print")
 parser.add_argument("-c", "--checkpoint-period", type=int, default=5, help="number of batches between each checkpoint")
 parser.add_argument("-f", "--reward-thresh", type=float, default=0.9, help="value required to be considered 'high' reward")
@@ -70,7 +70,7 @@ elif args.config_idx == 3:  # MAXIMUM ENTROPY BACKWARD POLICY
     config["outs"] = 2
 elif args.config_idx == 4:  # PREFERENCE BACKWARD POLICY WITH DQN
     config["algo"] = TrajectoryBalancePrefDQN
-    config["parameterise_p_b"] = config["sample_backward"] = config["target_model"] = True
+    config["parameterise_p_b"] = config["target_model"] = True  # TODO config["sample_backward"]
     config["gamma"] = args.gamma
     config["entropy_loss_multiplier"] = args.entropy_loss_multiplier
     config["target_update_period"] = args.target_update_period
@@ -147,7 +147,7 @@ if __name__ == "__main__":
     with torch.no_grad():  # (probably not necessary)
         train_src = DataSource(ctx, algo, task, args.device, use_replay=config["sample_backward"], random_action_prob=args.random_action_prob)  # gets training data inc rewards
 
-        train_src.do_sample_model(model, 4)#args.batch_size)  # TODO
+        train_src.do_sample_model(model, args.batch_size)
         if config["sample_backward"]:
             train_src.do_sample_backward(model, args.batch_size)
 
