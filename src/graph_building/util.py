@@ -69,7 +69,7 @@ def get_aligned_action_log_prob(nodes, edges, _mask, action_idx, reward_idx=1, r
             return math.log(incorrect_prob)
 
     else:
-        raise ValueError("aligned policy only implemented for reward index in {1, 2}")
+        raise ValueError("aligned policy only implemented for reward index in {0, 1}")
 
 def get_state_hash(v):  # v is (state, action, seed)
     obj = (tuple(tuple(s.reshape(-1).tolist()) for s in v[0]), *v[1:])

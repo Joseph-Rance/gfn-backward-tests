@@ -212,7 +212,7 @@ data_loader = torch.utils.data.DataLoader(data_source, batch_size=None)
 
 if __name__ == "__main__":
 
-    torch.set_float32_matmul_precision('high')
+    torch.set_float32_matmul_precision("high")
     torch.backends.cudnn.benchmark = True
 
     train_metrics = {}
@@ -444,8 +444,10 @@ if __name__ == "__main__":
     if args.meta_test != -1:
         gen_distribution = np.array([[[0 for _connectivity in range(2)] for _num_nodes_in_one_n_clique in range(7+1)] for _num_nodes in range(7+1)], dtype=float)
         trajs, _log_rewards = data_source.get_sampled(num=args.num_test_graphs, test=True)
+        nodes_counts = []
         for i, (nodes, edges, masks) in enumerate([t[-2][0] for t in trajs]):
             num_nodes = torch.sum(torch.sum(nodes, dim=1) > 0, dim=0).item()
+            nodes_counts.append(num_nodes)
             num_edges = torch.sum(edges[:, :, 0], dim=(0, 1)).item()
             adj_matrix = edges[:num_nodes, :num_nodes, 0]
             g = nx.from_numpy_array(adj_matrix.cpu().numpy(), edge_attr=None)
@@ -456,7 +458,8 @@ if __name__ == "__main__":
         gen_distribution /= max(0.01, np.sum(gen_distribution))  # -> 0.01 if all graphs have >7 nodes
         eta = 0.001
         kl = np.sum(np.maximum(eta, tru_distribution) * np.log(np.maximum(eta, tru_distribution) / np.maximum(eta, gen_distribution)))
-        np.save(f"results/meta_fitness_{args.meta_test}.npy", -kl)
+        #np.save(f"results/meta_fitness_{args.meta_test}.npy", -kl)
+        np.save(f"results/meta_fitness_{args.meta_test}.npy", -np.array(nodes_counts).mean() if kl < 0.3 else -1_000)
 
     else:
         print("done.")

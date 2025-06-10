@@ -42,6 +42,7 @@ class TrajectoryBalancePrefAC(TrajectoryBalanceBase):
         p_b_mask = batch.from_p_b.to(self.device).repeat_interleave(batch.traj_lens)
         log_p_F = fwd_cat.log_prob(batch.actions, batch.nx_graphs, model)[p_b_mask.logical_not()]
         log_p_B = bck_cat.log_prob(batch.bck_actions)
+        log_p_B_rev = bck_cat.log_prob(batch.bck_actions, rev=True)  # TODO: remove double reverse testing
 
         final_graph_idxs = torch.cumsum(batch.traj_lens[batch.from_p_b.logical_not()], 0) - 1
         first_graph_idxs = torch.roll(final_graph_idxs, 1, dims=0)
@@ -54,7 +55,7 @@ class TrajectoryBalancePrefAC(TrajectoryBalanceBase):
         log_p_B = torch.roll(log_p_B, -1, 0)
         log_p_B[batch.is_sink] = 0
 
-        rewards = - torch.concatenate([j for i, j in enumerate(batch.bbs_costs) if batch.from_p_b[i]])
+        rewards = torch.concatenate([j for i, j in enumerate(batch.bbs_costs) if batch.from_p_b[i]])  # TODO: remove double reverse testing
 
         state_vals = per_graph_out[p_b_mask, 1].detach()  # 0 is for reward pred (unused)
         prev_state_vals = torch.roll(per_graph_out[p_b_mask, 1], -1, 0)  # prev state when going backwards
@@ -67,7 +68,7 @@ class TrajectoryBalancePrefAC(TrajectoryBalanceBase):
                    + self.entropy_loss_multiplier * sum([i * i.exp() for i in log_p_B[p_b_mask]])
 
         traj_log_p_F = scatter(log_p_F, batch_idx[p_b_mask.logical_not()], dim=0, dim_size=batch.traj_lens.shape[0], reduce="sum")
-        traj_log_p_B = scatter(log_p_B[p_b_mask.logical_not()], batch_idx[p_b_mask.logical_not()], dim=0, dim_size=batch.traj_lens.shape[0], reduce="sum")
+        traj_log_p_B = scatter(log_p_B_rev[p_b_mask.logical_not()], batch_idx[p_b_mask.logical_not()], dim=0, dim_size=batch.traj_lens.shape[0], reduce="sum")
 
         traj_log_p_B = traj_log_p_B.detach()
 
@@ -223,6 +224,7 @@ class TrajectoryBalancePrefPPO(TrajectoryBalanceBase):
         p_b_mask = batch.from_p_b.to(self.device).repeat_interleave(batch.traj_lens)
         log_p_F = fwd_cat.log_prob(batch.actions, batch.nx_graphs, model)[p_b_mask.logical_not()]
         log_p_B = bck_cat.log_prob(batch.bck_actions)
+        log_p_B_rev = bck_cat.log_prob(batch.bck_actions, rev=True)  # TODO: remove double reverse testing
 
         with torch.no_grad():
             _target_fwd_cat, target_bck_cat, _target_per_graph_out = target_model(batch, batch.cond_info[batch_idx])
@@ -241,7 +243,7 @@ class TrajectoryBalancePrefPPO(TrajectoryBalanceBase):
         target_log_p_B[batch.is_sink] = 0
 
         c = batch.traj_lens[batch.from_p_b].sum()
-        rewards = - torch.concatenate([j for i, j in enumerate(batch.bbs_costs) if batch.from_p_b[i]])
+        rewards = torch.concatenate([j for i, j in enumerate(batch.bbs_costs) if batch.from_p_b[i]])  # TODO: remove double reverse testing
         G = torch.zeros(rewards.shape)
         for l in torch.flip(batch.traj_lens[batch.from_p_b], (0,)):
             G[c-l:c] = discounted_cumsum_left(rewards[c-l:c], self.gamma)
@@ -258,7 +260,7 @@ class TrajectoryBalancePrefPPO(TrajectoryBalanceBase):
                    + self.entropy_loss_multiplier * sum([i * i.exp() for i in log_p_B[p_b_mask]])
 
         traj_log_p_F = scatter(log_p_F, batch_idx[p_b_mask.logical_not()], dim=0, dim_size=batch.traj_lens.shape[0], reduce="sum")
-        traj_log_p_B = scatter(log_p_B[p_b_mask.logical_not()], batch_idx[p_b_mask.logical_not()], dim=0, dim_size=batch.traj_lens.shape[0], reduce="sum")
+        traj_log_p_B = scatter(log_p_B_rev[p_b_mask.logical_not()], batch_idx[p_b_mask.logical_not()], dim=0, dim_size=batch.traj_lens.shape[0], reduce="sum")
 
         traj_log_p_B = traj_log_p_B.detach()
 
@@ -266,7 +268,7 @@ class TrajectoryBalancePrefPPO(TrajectoryBalanceBase):
         tb_loss = dist_fn(traj_diffs).mean()  # train p_F with p_B from prev. iteration
                                            # (slightly different from algorithm 1 in the paper)
 
-        loss = tb_loss + p_B_loss + baseline_loss
+        loss = tb_loss + p_B_loss / 10 + baseline_loss / 100  # should probably not balance this by hand
 
         info = {
             "log_z": forward_log_Z.mean().item(),
@@ -308,6 +310,7 @@ class TrajectoryBalancePrefREINFORCE(TrajectoryBalanceBase):
         p_b_mask = batch.from_p_b.to(self.device).repeat_interleave(batch.traj_lens)
         log_p_F = fwd_cat.log_prob(batch.actions, batch.nx_graphs, model)[p_b_mask.logical_not()]
         log_p_B = bck_cat.log_prob(batch.bck_actions)
+        log_p_B_rev = bck_cat.log_prob(batch.bck_actions, rev=True)  # TODO: remove double reverse testing
 
         final_graph_idxs = torch.cumsum(batch.traj_lens[batch.from_p_b.logical_not()], 0) - 1
         first_graph_idxs = torch.roll(final_graph_idxs, 1, dims=0)
@@ -321,7 +324,7 @@ class TrajectoryBalancePrefREINFORCE(TrajectoryBalanceBase):
         log_p_B[batch.is_sink] = 0
 
         c = batch.traj_lens[batch.from_p_b].sum()
-        rewards = - torch.concatenate([j for i, j in enumerate(batch.bbs_costs) if batch.from_p_b[i]])
+        rewards = torch.concatenate([j for i, j in enumerate(batch.bbs_costs) if batch.from_p_b[i]])  # TODO: remove double reverse testing
         G = torch.zeros(rewards.shape)
         for l in torch.flip(batch.traj_lens[batch.from_p_b], (0,)):
             G[c-l:c] = discounted_cumsum_left(rewards[c-l:c], self.gamma)
@@ -335,7 +338,7 @@ class TrajectoryBalancePrefREINFORCE(TrajectoryBalanceBase):
                    + self.entropy_loss_multiplier * sum([i * i.exp() for i in log_p_B[p_b_mask]])
 
         traj_log_p_F = scatter(log_p_F, batch_idx[p_b_mask.logical_not()], dim=0, dim_size=batch.traj_lens.shape[0], reduce="sum")
-        traj_log_p_B = scatter(log_p_B[p_b_mask.logical_not()], batch_idx[p_b_mask.logical_not()], dim=0, dim_size=batch.traj_lens.shape[0], reduce="sum")
+        traj_log_p_B = scatter(log_p_B_rev[p_b_mask.logical_not()], batch_idx[p_b_mask.logical_not()], dim=0, dim_size=batch.traj_lens.shape[0], reduce="sum")
 
         traj_log_p_B = traj_log_p_B.detach()
 
@@ -343,7 +346,7 @@ class TrajectoryBalancePrefREINFORCE(TrajectoryBalanceBase):
         tb_loss = dist_fn(traj_diffs).mean()  # train p_F with p_B from prev. iteration
                                            # (slightly different from algorithm 1 in the paper)
 
-        loss = tb_loss + p_B_loss + baseline_loss
+        loss = tb_loss + p_B_loss / 10 + baseline_loss / 500  # should probably not balance this by hand
 
         info = {
             "log_z": forward_log_Z.mean().item(),
@@ -400,7 +403,61 @@ class TrajectoryBalanceUniform(TrajectoryBalanceBase):
         return loss, info
 
 
-class TrajectoryBalanceTLM(TrajectoryBalanceBase):
+class TrajectoryBalanceWeightedTLM(TrajectoryBalanceBase):
+
+    def compute_batch_losses(self, model, batch, _target_model, dist_fn=huber):
+
+        log_Z = model.logZ(batch.cond_info)[:, 0]
+        clipped_log_R = torch.maximum(batch.log_rewards, torch.tensor(-75, device=self.device)).float()
+
+        batch_idx = torch.arange(batch.traj_lens.shape[0], device=self.device).repeat_interleave(batch.traj_lens)
+        fwd_cat, bck_cat, _per_graph_out = model(batch, batch.cond_info[batch_idx])
+        for atype, (idcs, mask) in batch.secondary_masks.items():
+            fwd_cat.set_secondary_masks(atype, idcs, mask)
+
+        log_p_F = fwd_cat.log_prob(batch.actions, batch.nx_graphs, model)
+        log_p_B = bck_cat.log_prob(batch.bck_actions)
+
+        final_graph_idxs = torch.cumsum(batch.traj_lens, 0) - 1
+
+        # don't count padding states on forward (kind of wasteful to compute these)
+        log_p_F[final_graph_idxs] = 0
+
+        # don't count starting states or consecutive sinks (due to padding) on backward
+        log_p_B = torch.roll(log_p_B, -1, 0)
+        log_p_B[batch.is_sink] = 0
+
+        traj_log_p_F = scatter(log_p_F, batch_idx, dim=0, dim_size=batch.traj_lens.shape[0], reduce="sum")
+        traj_log_p_B = scatter(log_p_B, batch_idx, dim=0, dim_size=batch.traj_lens.shape[0], reduce="sum")
+
+        costs = torch.tensor([j.sum() for i, j in enumerate(batch.bbs_costs) if batch.from_p_b[i]])
+
+        back_loss = -(traj_log_p_B / max(costs, 0.001)).mean()
+        traj_log_p_B = traj_log_p_B.detach()
+
+        traj_diffs = (log_Z + traj_log_p_F) - (clipped_log_R + traj_log_p_B)
+        tb_loss = dist_fn(traj_diffs).mean()  # train p_F with p_B from prev. iteration
+                                                    # (slightly different from algorithm 1 in the paper)
+
+        loss = tb_loss + back_loss * 500
+
+        info = {
+            "log_z": log_Z.mean().item(),
+            "log_p_f": traj_log_p_F.mean().item(),
+            "log_p_b": traj_log_p_B.mean().item(),
+            "log_r": clipped_log_R.mean().item(),
+            "tb_loss": tb_loss.item(),
+            "back_loss": back_loss.item(),
+            "loss": loss.item(),
+            "bck_std": torch.mean(torch.tensor([
+                torch.std(torch.concatenate([torch.flatten(p[i]) for p in bck_cat.logsoftmax()])) for i, _a in enumerate(batch.bck_actions)
+            ])).item()
+        }
+
+        return loss, info
+
+
+class TrajectoryBalanceTLM(TrajectoryBalanceBase):  # (*pessimistic)
 
     def compute_batch_losses(self, model, batch, _target_model, dist_fn=huber):
 

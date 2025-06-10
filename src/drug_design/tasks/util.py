@@ -389,7 +389,9 @@ class TrajectoryBalanceBase:
             for g, a in zip(torch_graphs, [i for tj in trajs for i in tj["bck_a"]])
         ]
 
+        batch.pure_log_rewards = torch.clone(batch.log_rewards)
         batch.log_rewards -= torch.tensor([i.sum().item() for i in batch.bbs_costs]) * self.preference_strength
+        #batch.log_rewards = torch.log(torch.exp(batch.log_rewards) - (1.2 - torch.tensor([i.sum().item() for i in batch.bbs_costs])) * self.preference_strength)
 
         return batch
 

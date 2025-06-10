@@ -6,7 +6,7 @@ import torch
 
 PARALLEL = 2
 SEED = 1
-N = 3
+N = 1
 dp = {}
 
 def fitness_func(ga_instance, weights, solution_idx):
@@ -14,6 +14,7 @@ def fitness_func(ga_instance, weights, solution_idx):
     if tuple(weights.tolist()) in dp.keys():
         return dp[tuple(weights.tolist())]
     weights = torch.tensor(weights, dtype=torch.float32) ** N  # high N helps to focus on only a few weights
+    weights[[3, 5, 7, 8, 9]] = 0  # don't want to use these ones anymore
     torch.save(weights / torch.sum(weights), f"results/meta_weights_{solution_idx}.pt")  # this does not normalise: weights are not bounded since they can be negative
     _return_code = subprocess.call(
         f"python src/graph_building/main.py --reward-idx 2 --loss-fn meta --num-batches 5000 --meta-test {solution_idx} --seed {SEED} --cycle-len -1", shell=True

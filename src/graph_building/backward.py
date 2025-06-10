@@ -181,7 +181,7 @@ def get_bck_probs_meta(trajs, traj_lens, actions, raw_embeddings, embedding_stru
     a_4_v, __, a_4_m = get_bck_probs_action_mult(trajs, traj_lens, actions, raw_embeddings, embedding_structure, bck_models, action_type=2, n=2, device=device)
     a_5_v, __, a_5_m = get_bck_probs_action_mult(trajs, traj_lens, actions, raw_embeddings, embedding_structure, bck_models, action_type=2, n=0.5, device=device)
     r_0_v, __, r_0_m = get_bck_probs_rand(trajs, traj_lens, actions, raw_embeddings, embedding_structure, bck_models, std=0.05, device=device)
-    l_0_v, __, l_0_m = get_bck_probs_aligned(trajs, traj_lens, actions, raw_embeddings, embedding_structure, bck_models, reward_arg=reward_arg, device=device)
+    l_0_v, __, l_0_m = get_bck_probs_aligned(trajs, traj_lens, actions, raw_embeddings, embedding_structure, bck_models, reward_arg=reward_arg, device=device)  # ?!?!?!
     t_0_v, __, t_0_m = get_bck_probs_tlm(trajs, traj_lens, actions, raw_embeddings, embedding_structure, bck_models, device=device)
 
     log_p_b = torch.roll(t_0_v, -1, 0)

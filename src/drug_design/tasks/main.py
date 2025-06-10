@@ -22,11 +22,13 @@ from src.drug_design.tasks.algs import (TrajectoryBalanceUniform,
                                         TrajectoryBalancePrefREINFORCE,
                                         TrajectoryBalancePrefAC,
                                         TrajectoryBalancePrefPPO,
+                                        TrajectoryBalanceWeightedTLM,
                                         sq_dist_fn, huber)
 from src.drug_design.tasks.util import ReactionTask, ReactionTemplateEnv, SynthesisSampler, DataSource
 
 
 parser = argparse.ArgumentParser()
+parser.add_argument("-s", "--seed", type=int, default="1")
 parser.add_argument("-d", "--device", type=str, default="cuda")
 parser.add_argument("-b", "--batch-size", type=int, default=64)
 parser.add_argument("-i", "--config-idx", type=int, default=0, help="index of config to select (see main.py)")
@@ -34,8 +36,8 @@ parser.add_argument("-w", "--preference-strength", type=float, default=0, help="
 parser.add_argument("-g", "--gamma", type=float, default=1, help="discount factor on rewards for backward policy")
 parser.add_argument("-m", "--entropy-loss-multiplier", type=float, default=0, help="weighting of entropy term in backward policy loss")
 parser.add_argument("-e", "--epsilon", type=float, default=0.2, help="clip proportion for PPO")
-parser.add_argument("-s", "--dist-fn", type=str, default="huber", help="options: {square, huber}")
-parser.add_argument("-t", "--target-update-period", type=int, default=3, help="number of batches between each update to the target model")
+parser.add_argument("-u", "--dist-fn", type=str, default="huber", help="options: {square, huber}")
+parser.add_argument("-t", "--target-update-period", type=int, default=5, help="number of batches between each update to the target model")
 parser.add_argument("-p", "--print-period", type=int, default=1, help="number of batches between each print")
 parser.add_argument("-c", "--checkpoint-period", type=int, default=5, help="number of batches between each checkpoint")
 parser.add_argument("-f", "--reward-thresh", type=float, default=0.9, help="value required to be considered 'high' reward")
@@ -43,6 +45,8 @@ parser.add_argument("-l", "--max-len", type=int, default=5, help="max trajectory
 parser.add_argument("-r", "--random-action-prob", type=float, default=0.1, help="probability of randomly selecting an action")
 args = parser.parse_args()
 
+np.random.seed(args.seed)
+torch.manual_seed(args.seed)
 
 # UNIFORM BACKWARD POLICY
 config = {
@@ -51,7 +55,7 @@ config = {
     "parameterise_p_b": False,  # whether to learn P_b
     "sample_backward": False,  # whether to sample trajectories using the backward policy
     "target_model": False,  # whether to maintain a backward model
-    "gamma": None,  # discount factor on rewards for backward policy
+    "gamma": None,  # discount factor on rewards for backward policy (except for in myopic case)
     "entropy_loss_multiplier": None,  # weighting of entropy term in backward policy loss
     "target_update_period": None,  # frequency to update target model with main weights
     "epsilon": None,  # clip proportion for PPO
@@ -94,6 +98,9 @@ elif args.config_idx == 7:  # PREFERENCE BACKWARD POLICY WITH PPO
     config["target_update_period"] = args.target_update_period
     config["epsilon"] = args.epsilon
     config["outs"] = 2
+elif args.config_idx == 8:  # TRAJECTORY LIKELIHOOD MAXIMISATION BACKWARD POLICY WEIGHTED BY COST
+    config["algo"] = TrajectoryBalanceWeightedTLM
+    config["parameterise_p_b"] = True
 
 
 if __name__ == "__main__":
@@ -160,11 +167,11 @@ if __name__ == "__main__":
     mean_tanimoto_distances = []
     traj_len_dist = [0 for __ in range(args.max_len + 7)]
 
-    full_results = [[] for __ in range(20 + args.max_len)]
+    full_results = [[] for __ in range(21 + args.max_len)]
 
     start_time = time.time()
 
-    for it, batch in zip(range(800), cycle(train_dl)):
+    for it, batch in zip(range(1_000), cycle(train_dl)):
 
         batch = batch.to(args.device)
 
@@ -197,7 +204,7 @@ if __name__ == "__main__":
         with torch.no_grad():
 
             mols = [ctx.graph_to_obj(batch.nx_graphs[i]) for i in (torch.cumsum(batch.traj_lens, 0) - 1)[batch.from_p_b.logical_not()]]
-            rewards = torch.exp(batch.log_rewards[batch.from_p_b.logical_not()] / batch.cond_info_beta[batch.from_p_b.logical_not()])
+            rewards = torch.exp(batch.pure_log_rewards[batch.from_p_b.logical_not()] / batch.cond_info_beta[batch.from_p_b.logical_not()])
 
             murcko_scaffolds = [MurckoScaffold.MurckoScaffoldSmiles(mol=m) for m in mols]
 
@@ -208,13 +215,9 @@ if __name__ == "__main__":
             num_mols_tested.append(num_mols_tested[-1] + len(mols))
             num_unique_scaffolds.append(len(unique_scaffolds))
 
-            np.save("results/unique_scaffolds.npy", list(zip(num_mols_tested, num_unique_scaffolds)))
-
             fps = np.array([np.array(AllChem.GetMorganFingerprintAsBitVect(mol, 2, nBits=2000)) for mol in mols])
             mean_tanimoto_dist = np.mean(pdist(fps, metric="jaccard"))
             mean_tanimoto_distances.append(mean_tanimoto_dist)
-
-            np.save("results/tanimoto_distances.npy", mean_tanimoto_distances)
 
             total_time = time.time() - start_time
             start_time = time.time()
@@ -230,7 +233,7 @@ if __name__ == "__main__":
                     f"logZ: {info['log_z']:7.4f} " \
                     f"gen scaffolds: {len(scaffolds_above_thresh)} " \
                     f"unique scaffolds: {len(unique_scaffolds) - prev_unique_scaffolds} " \
-                    f"Tanimoto: {mean_tanimoto_dist} " \
+                    f"Tanimoto: {mean_tanimoto_dist:.4f} " \
                     f"mean synth. cost: {sum([c.sum().item() for i, c in enumerate(batch.bbs_costs) if not batch.from_p_b[i]])/len(batch.traj_lens[batch.from_p_b.logical_not()]):4.2f} " \
                      + (f"mean bck synth. cost: {sum([c.sum().item() for i, c in enumerate(batch.bbs_costs) if batch.from_p_b[i]])/len(batch.traj_lens[batch.from_p_b]):4.2f}"
                         if config["sample_backward"] else ""))
@@ -249,6 +252,7 @@ if __name__ == "__main__":
                 info["log_p_f"],
                 info["log_p_b"],
                 info["bck_std"],
+                mean_tanimoto_dist,
                 *traj_len_dist
             ]
 

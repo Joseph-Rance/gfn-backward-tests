@@ -27,9 +27,6 @@ parser.add_argument("-r", "--results-dir", type=str, default="results", help="di
 parser.add_argument("-i", "--init-embeddings", action="store_true", default=False, help="generate files in results/s")
 parser.add_argument("-m", "--merge-embeddings", action="store_true", default=False, help="merge results/embeddings into results/s")
 parser.add_argument("-c", "--run-colour", type=int, default=0, help="colour to assign to the run being merged in (-1 to get colour from results/colours.npy)")
-parser.add_argument("-g", "--process-data", action="store_true", default=False, help="save the data for a graph")
-parser.add_argument("-p", "--show-graph", action="store_true", default=False, help="show a matplotlib graph in a separate window")
-parser.add_argument("-w", "--save-graph", action="store_true", default=False, help="save a matplotlib graph as a file")
 parser.add_argument("-u", "--template-filename", type=str, default="s/template.npy", help="filename of template starting from results-dir")
 parser.add_argument("-v", "--graph-filename", type=str, default="s/loss_surface.png", help="filename of output png starting from results-dir")
 
@@ -116,49 +113,5 @@ if args.merge_embeddings:
     np.save(f"{args.results_dir}/s/bck_embeddings.npy", np.array(bck_embeddings))
     np.save(f"{args.results_dir}/s/losses.npy", losses)
     np.save(f"{args.results_dir}/s/colours.npy", colours)
-
-if args.process_data:
-    fwd_embeddings = np.load(f"{args.results_dir}/s/fwd_embeddings.npy")
-    bck_embeddings = np.load(f"{args.results_dir}/s/bck_embeddings.npy")
-    losses = np.load(f"{args.results_dir}/s/losses.npy")
-    colours = np.load(f"{args.results_dir}/s/colours.npy")
-
-    # TODO:
-    # "It is highly recommended to use another dimensionality reduction method (e.g. PCA for dense data or TruncatedSVD for sparse data) to reduce the number of dimensions to a reasonable amount (e.g. 50) if the number of features is very high. This will suppress some noise and speed up the computation of pairwise distances between samples. For more tips see Laurens van der Maaten’s FAQ [2].""
-
-    tsne = manifold.TSNE(n_components=1, random_state=1)
-    fwd_vals = tsne.fit_transform(fwd_embeddings).flatten()
-    bck_vals = tsne.fit_transform(bck_embeddings).flatten()
-
-    plt.plot(fwd_vals)
-    plt.savefig("test_a.png")
-    plt.clf()
-    plt.plot(bck_vals)
-    plt.savefig("test_b.png")
-    plt.clf()
-
-    data = np.stack((fwd_vals, bck_vals, losses, colours))
-    np.save(f"{args.results_dir}/s/processed_data.npy", data)
-
-if args.show_graph or args.save_graph:
-
-    # should add to this graph to show a (smoothed) solid surface + (smoothed) line over the surface
-
-    if not args.process_data:
-        fwd_vals, bck_vals, losses, colours = np.load(f"{args.results_dir}/s/processed_data.npy")
-
-    from math import log
-    fig = plt.figure()
-    ax = fig.add_subplot(projection='3d')
-    ax.scatter(fwd_vals, bck_vals, [log(x) for x in losses], c=colours)
-    ax.set_xlabel("forward policy")
-    ax.set_ylabel("backward policy")
-    ax.set_zlabel("loss")
-
-if args.save_graph:
-    plt.savefig(args.results_dir + "/" + args.graph_filename)
-
-if args.show_graph:
-    plt.show()
 
 print("done.")
